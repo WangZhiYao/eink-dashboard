@@ -56,12 +56,12 @@ def _start_scheduler():
     )
     todos_db.init_db(settings.todo_db)
     _scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.tz))
-    # Fast refresh (every render_interval_min) during the Pomodoro window;
-    # slower (every 30 min) overnight to spare e-ink flashes / battery.
+    # Render only during the work window [pomodoro_start, pomodoro_end), every
+    # render_interval_min. Overnight we stop rendering entirely — the screen
+    # holds its last image (no e-ink flashes, no Chromium CPU) until the
+    # pre-render below kicks the next work day off.
     day_hours = f"{settings.pomodoro_start}-{settings.pomodoro_end - 1}"
-    night_hours = f"0-{settings.pomodoro_start - 1},{settings.pomodoro_end}-23"
     _scheduler.add_job(render_now, "cron", hour=day_hours, minute=f"*/{settings.render_interval_min}", id="render_day")
-    _scheduler.add_job(render_now, "cron", hour=night_hours, minute="*/30", id="render_night")
     # pre-render just before the day starts (e.g. 8:55) so the 9:00 pull gets a fresh image
     _scheduler.add_job(render_now, "cron", hour=settings.pomodoro_start - 1, minute=60 - settings.render_interval_min, id="render_prerender")
     _scheduler.start()
