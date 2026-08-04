@@ -1,0 +1,7 @@
+# Test/development dependencies only. Install with:
+#   pip install -r requirements-dev.txt
+# The production Docker image installs requirements.txt (no test deps).
+-r requirements.txt
+pytest>=8.2
+respx>=0.21
+pillow>=10.3

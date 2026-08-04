@@ -1,0 +1,15 @@
+services:
+  eink:
+    build: .
+    image: eink-dashboard
+    container_name: eink-dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # todos live on the persisted volume (bind-mounted ./data)
+      TODO_DB: /app/data/todos.db
+    volumes:
+      - ./data:/app/data
+    ports:
+      # localhost only — the host nginx reverse-proxies public HTTPS to this
+      - "127.0.0.1:8000:8000"
