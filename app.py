@@ -1,4 +1,7 @@
+import logging
+import logging.config
 import os
+import sys
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -11,6 +14,32 @@ from todos import db as todos_db
 from todos.api import router as todos_router
 from todos.auth import verify_admin
 
+log = logging.getLogger("app")
+
+# Configure logging once at import. render.py / fetchers already call
+# log.info/log.warning/log.exception for the things that matter (render
+# success+failure, weather/SHT40 degradation), but with no handler configured
+# those records are silently dropped — so "the dashboard stopped rendering"
+# was invisible. This attaches a stdout handler at root level so they reach
+# `docker compose logs`. uvicorn's own LOGGING_CONFIG only touches the
+# uvicorn.* loggers (disable_existing_loggers=False), so this root handler
+# survives regardless of whether uvicorn configures logging before or after.
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {"format": "%(asctime)s %(levelname)-8s %(name)s | %(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": sys.stdout,
+        },
+    },
+    "root": {"handlers": ["console"], "level": settings.log_level.upper()},
+})
+
 templates = Jinja2Templates(directory="templates")
 
 OUT = "static/dashboard.png"
@@ -19,6 +48,12 @@ _scheduler = None
 
 def _start_scheduler():
     global _scheduler
+    log.info(
+        "eink-dashboard starting | tz=%s render_interval=%dm pomodoro=%d-%d lunch=%s-%s todo_db=%s log_level=%s",
+        settings.tz, settings.render_interval_min, settings.pomodoro_start,
+        settings.pomodoro_end, settings.lunch_start, settings.lunch_end,
+        settings.todo_db, settings.log_level,
+    )
     todos_db.init_db(settings.todo_db)
     _scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.tz))
     # Fast refresh (every render_interval_min) during the Pomodoro window;

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     admin_password: str = "changeme"   # Basic-auth password — change before deploy
     tz: str = "Asia/Shanghai"
     todo_db: str = "todos.db"           # SQLite path for todos (volume-mount in Docker)
+    log_level: str = "INFO"             # root log level (DEBUG/INFO/WARNING/...); tunable via LOG_LEVEL env
 
     @model_validator(mode="after")
     def _pomodoro_window_is_valid(self) -> "Settings":

@@ -21,5 +21,10 @@ ENV TZ=Asia/Shanghai \
 
 EXPOSE 8000
 
-# Bind 0.0.0.0 so the host nginx can reach it via the mapped port.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers: trust the X-Forwarded-For that nginx sets so the access log
+#   shows the real client IP instead of the docker gateway (172.20.0.1 / 127.0.0.1).
+# --forwarded-allow-ips "*": nginx connects from the docker bridge, not 127.0.0.1
+#   (uvicorn's default allow-list), so broaden it. Safe here because the container
+#   is only reachable from the host nginx / docker network, and auth is separate.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

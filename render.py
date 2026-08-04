@@ -113,6 +113,7 @@ def _todos_for_dashboard() -> list:
     try:
         return todos_db.list_todos(settings.todo_db, include_done=False)[:6]
     except Exception:
+        log.warning("todo fetch failed; serving empty list", exc_info=True)
         return []
 
 
