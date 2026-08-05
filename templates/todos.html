@@ -83,6 +83,16 @@
   .empty{text-align:center; padding:64px 0; color:var(--on-surface-variant);}
   .empty .ms{font-size:48px; opacity:.35; display:block; margin-bottom:8px;}
 
+  .ov{position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:20; padding:24px;}
+  .ov.show{display:flex;}
+  .dlg{background:var(--surface-container); border-radius:20px; padding:20px; width:100%; max-width:420px; box-shadow:var(--e1);}
+  .dlgbtns{display:flex; justify-content:flex-end; gap:8px; margin-top:16px;}
+  .btn.text{background:transparent; color:var(--primary); box-shadow:none; padding:0 16px;}
+  .btn.text:hover{background:var(--surface-container-high);}
+  @media (max-width:560px){
+    .ov{align-items:flex-end; padding:0;}
+    .dlg{max-width:none; border-radius:20px 20px 0 0; padding-bottom:max(20px, env(safe-area-inset-bottom));}
+  }
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
 </style>
 </head>
@@ -111,6 +121,21 @@
   </div>
 </div>
 
+<div class="ov" id="modal">
+  <div class="dlg">
+    <div class="field"><input type="text" id="etitle" placeholder="编辑待办…" autocomplete="off"></div>
+    <div class="chips" id="echips">
+      <button type="button" class="chip normal" data-prio="normal"><span class="dot"></span>普通</button>
+      <button type="button" class="chip high" data-prio="high"><span class="dot"></span>紧要</button>
+      <button type="button" class="chip low" data-prio="low"><span class="dot"></span>从容</button>
+    </div>
+    <div class="dlgbtns">
+      <button class="btn text" id="ecancel">取消</button>
+      <button class="btn" id="esave"><span class="ms" style="font-size:18px">save</span>保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const NAMES = { high:"紧要", normal:"普通", low:"从容" };
 let prio = "normal";
@@ -123,8 +148,10 @@ document.getElementById("chips").addEventListener("click", e => {
   c.classList.add("sel");
 });
 
+let TODOS = [];
 async function load(){
   const todos = await (await fetch("/api/todos?include_done=true")).json();
+  TODOS = todos;
   const open = todos.filter(t => !t.done), done = todos.filter(t => t.done);
   document.getElementById("count").textContent = open.length ? `${open.length} 项` : "";
   document.getElementById("empty").style.display = todos.length ? "none" : "block";
@@ -139,6 +166,7 @@ function render(t){
          onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggle(${t.id}, ${!t.done})}"><div class="box"></div></div>
     <span class="itext">${escapeHtml(t.title)}</span>
     <span class="itag ${escapeHtml(t.prio)}">${NAMES[t.prio] || escapeHtml(t.prio)}</span>
+    <button class="iconbtn" onclick="edit(${t.id})" title="编辑" aria-label="编辑"><span class="ms">edit</span></button>
     <button class="iconbtn" onclick="del(${t.id})" title="删除" aria-label="删除"><span class="ms">delete</span></button>
   </li>`;
 }
@@ -155,6 +183,40 @@ document.getElementById("add").addEventListener("click", add);
 document.getElementById("title").addEventListener("keydown", e => { if (e.key === "Enter") add(); });
 async function toggle(id, done){ await fetch(`/api/todos/${id}`, { method:"PATCH", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ done }) }); load(); }
 async function del(id){ await fetch(`/api/todos/${id}`, { method:"DELETE" }); load(); }
+let editingId = null;
+let editPrio = "normal";
+
+function edit(id){
+  const t = TODOS.find(x => x.id === id);
+  if (!t) return;
+  editingId = id;
+  editPrio = t.prio;
+  document.getElementById("etitle").value = t.title;
+  document.querySelectorAll("#echips .chip").forEach(x => x.classList.toggle("sel", x.dataset.prio === t.prio));
+  document.getElementById("modal").classList.add("show");
+  document.getElementById("etitle").focus();
+}
+function closeModal(){ document.getElementById("modal").classList.remove("show"); editingId = null; }
+async function saveEdit(){
+  if (editingId == null) return;
+  const title = document.getElementById("etitle").value.trim();
+  if (!title) return;                                  // 空标题静默忽略，与添加一致
+  await fetch(`/api/todos/${editingId}`, { method:"PATCH", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ title, prio: editPrio }) }); // 404（被并发删除）也照常关闭+刷新
+  closeModal();
+  load();
+}
+document.getElementById("echips").addEventListener("click", e => {
+  const c = e.target.closest(".chip");
+  if (!c) return;
+  editPrio = c.dataset.prio;
+  document.querySelectorAll("#echips .chip").forEach(x => x.classList.remove("sel"));
+  c.classList.add("sel");
+});
+document.getElementById("esave").addEventListener("click", saveEdit);
+document.getElementById("ecancel").addEventListener("click", closeModal);
+document.getElementById("etitle").addEventListener("keydown", e => { if (e.key === "Enter") saveEdit(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 load();
 </script>
 </body>
