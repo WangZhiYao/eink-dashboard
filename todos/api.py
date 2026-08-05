@@ -18,6 +18,7 @@ class TodoIn(BaseModel):
 class TodoPatch(BaseModel):
     title: str | None = None
     done: bool | None = None
+    prio: Literal["high", "normal", "low"] | None = None
 
 
 @router.get("")
@@ -32,8 +33,8 @@ def create(todo: TodoIn):
 
 @router.patch("/{todo_id}")
 def update(todo_id: int, patch: TodoPatch):
-    had_fields = patch.done is not None or patch.title is not None
-    affected = db.update_todo(settings.todo_db, todo_id, done=patch.done, title=patch.title)
+    had_fields = patch.done is not None or patch.title is not None or patch.prio is not None
+    affected = db.update_todo(settings.todo_db, todo_id, done=patch.done, title=patch.title, prio=patch.prio)
     if had_fields and affected == 0:
         raise HTTPException(status_code=404, detail="not found")
     return {"ok": True}

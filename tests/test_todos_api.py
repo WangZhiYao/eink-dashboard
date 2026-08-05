@@ -93,3 +93,20 @@ def test_api_patch_and_delete_missing_todo_404(monkeypatch, tmp_path):
     client, h = _router_client(monkeypatch, tmp_path)
     assert client.patch("/api/todos/9999", json={"done": True}, headers=h).status_code == 404
     assert client.delete("/api/todos/9999", headers=h).status_code == 404
+
+
+def test_api_patch_prio_and_title(monkeypatch, tmp_path):
+    client, h = _router_client(monkeypatch, tmp_path)
+    tid = client.post("/api/todos", json={"title": "X", "prio": "low"}, headers=h).json()["id"]
+
+    r = client.patch(f"/api/todos/{tid}", json={"title": "Y", "prio": "high"}, headers=h)
+    assert r.status_code == 200
+    t = client.get("/api/todos", headers=h).json()[0]
+    assert t["title"] == "Y" and t["prio"] == "high"
+
+    # 只改优先级也行
+    assert client.patch(f"/api/todos/{tid}", json={"prio": "normal"}, headers=h).status_code == 200
+    assert client.get("/api/todos", headers=h).json()[0]["prio"] == "normal"
+
+    # 非法优先级被 Literal 白名单拒绝（与 create 一致）
+    assert client.patch(f"/api/todos/{tid}", json={"prio": "evil"}, headers=h).status_code == 422
