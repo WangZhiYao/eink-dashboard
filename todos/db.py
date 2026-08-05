@@ -52,7 +52,7 @@ def add_todo(path: str, title: str, prio: str = "normal") -> Todo:
         return Todo(cur.lastrowid, title, False, prio, now)
 
 
-def update_todo(path: str, id: int, done: bool | None = None, title: str | None = None) -> int:
+def update_todo(path: str, id: int, done: bool | None = None, title: str | None = None, prio: str | None = None) -> int:
     """Apply the given fields; return the number of rows actually changed (0 = no such id)."""
     with _connect(path) as conn:
         affected = 0
@@ -60,6 +60,8 @@ def update_todo(path: str, id: int, done: bool | None = None, title: str | None 
             affected += conn.execute("UPDATE todos SET done=? WHERE id=?", (1 if done else 0, id)).rowcount
         if title is not None:
             affected += conn.execute("UPDATE todos SET title=? WHERE id=?", (title, id)).rowcount
+        if prio is not None:
+            affected += conn.execute("UPDATE todos SET prio=? WHERE id=?", (prio, id)).rowcount
         conn.commit()
         return affected
 
