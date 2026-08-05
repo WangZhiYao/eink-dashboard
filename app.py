@@ -46,6 +46,25 @@ OUT = "static/dashboard.png"
 _scheduler = None
 
 
+def _render_schedule(s):
+    """Cron (job_id, hour, minute) for each render job, derived from settings.
+
+    Pure function so the daily schedule is unit-testable without booting a live
+    scheduler / DB / Chromium. Consumed by _start_scheduler() below.
+    """
+    return [
+        # every render_interval_min during the work window [start, end)
+        ("render_day", f"{s.pomodoro_start}-{s.pomodoro_end - 1}", f"*/{s.render_interval_min}"),
+        # one final render at the top of pomodoro_end (e.g. 21:00), then the screen
+        # holds its last image overnight — no e-ink flashes / Chromium CPU until the
+        # next day's pre-render. Without this the last render was 20:55 (render_day's
+        # hour field "9-20" is inclusive, so hour 21 never fired).
+        ("render_final", str(s.pomodoro_end), "0"),
+        # pre-render just before the day starts (e.g. 8:55) so the 9:00 pull gets a fresh image
+        ("render_prerender", str(s.pomodoro_start - 1), str(60 - s.render_interval_min)),
+    ]
+
+
 def _start_scheduler():
     global _scheduler
     log.info(
@@ -56,14 +75,8 @@ def _start_scheduler():
     )
     todos_db.init_db(settings.todo_db)
     _scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.tz))
-    # Render only during the work window [pomodoro_start, pomodoro_end), every
-    # render_interval_min. Overnight we stop rendering entirely — the screen
-    # holds its last image (no e-ink flashes, no Chromium CPU) until the
-    # pre-render below kicks the next work day off.
-    day_hours = f"{settings.pomodoro_start}-{settings.pomodoro_end - 1}"
-    _scheduler.add_job(render_now, "cron", hour=day_hours, minute=f"*/{settings.render_interval_min}", id="render_day")
-    # pre-render just before the day starts (e.g. 8:55) so the 9:00 pull gets a fresh image
-    _scheduler.add_job(render_now, "cron", hour=settings.pomodoro_start - 1, minute=60 - settings.render_interval_min, id="render_prerender")
+    for job_id, hour, minute in _render_schedule(settings):
+        _scheduler.add_job(render_now, "cron", hour=hour, minute=minute, id=job_id)
     _scheduler.start()
     # render once immediately so the first serve isn't empty
     try:
