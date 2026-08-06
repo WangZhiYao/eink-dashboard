@@ -248,3 +248,26 @@ def test_prio_marker_mapping():
     assert render.prio_marker("normal") == "●"
     assert render.prio_marker("low") == "○"
     assert render.prio_marker("urgent") == "●"   # unknown -> fallback to solid black
+
+
+def test_template_shows_prio_markers():
+    from todos.db import Todo
+    ctx = {
+        "time_str": "09:41", "date_str": "2026.08.02", "weekday": "星期日",
+        "indoor": render.sht40.Sht40Data(temp=26.0, humidity=42.0, battery=87),
+        "weather": render.weather.WeatherData(
+            current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21, aqi=45,
+            hourly=[{"label": "现在", "text": "多云", "temp": 28, "rain": 34}],
+            sunrise="05:42", sunset="19:00"),
+        "lunar": "六月二十",
+        "pomodoro": {"active": True, "phase": "work", "remaining": 20},
+        "todos": [
+            Todo(1, "紧要事项", False, "high", "2026-08-03T00:00:00+00:00"),
+            Todo(2, "普通事项", False, "normal", "2026-08-03T00:00:00+00:00"),
+            Todo(3, "从容事项", False, "low", "2026-08-03T00:00:00+00:00"),
+        ],
+    }
+    html = render.render_html(ctx)
+    assert '<span class="pmark high">●</span>' in html
+    assert '<span class="pmark normal">●</span>' in html
+    assert '<span class="pmark low">○</span>' in html
