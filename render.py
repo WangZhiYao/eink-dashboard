@@ -173,12 +173,22 @@ def _icon_kind(code: str) -> str:
     return "cloud"
 
 
+_PRIO_MARKERS = {"high": "●", "normal": "●", "low": "○"}
+
+
+def prio_marker(prio: str) -> str:
+    """Priority marker glyph for the e-ink dashboard. Shape only distinguishes
+    solid vs hollow; color comes from the CSS class (.pmark.normal = gray)."""
+    return _PRIO_MARKERS.get(prio, "●")
+
+
 def wx_icon_svg(code: str) -> str:
     body = _SVG.get(_icon_kind(code), _SVG["cloud"])
     return f'<svg class="ic" viewBox="0 0 32 32">{body}</svg>'
 
 
 _env.globals["wx_icon_svg"] = wx_icon_svg
+_env.globals["prio_marker"] = prio_marker
 
 
 def render_html(context: dict) -> str:

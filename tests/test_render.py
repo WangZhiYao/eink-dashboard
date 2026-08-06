@@ -241,3 +241,10 @@ def test_template_break_copy_is_fangsong():
     assert "放松" in html
     assert "走动" not in html
     assert "喝水" not in html
+
+
+def test_prio_marker_mapping():
+    assert render.prio_marker("high") == "●"
+    assert render.prio_marker("normal") == "●"
+    assert render.prio_marker("low") == "○"
+    assert render.prio_marker("urgent") == "●"   # unknown -> fallback to solid black
