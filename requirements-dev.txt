@@ -4,4 +4,4 @@
 -r requirements.txt
 pytest>=8.2
 respx>=0.21
-pillow>=10.3
+pillow>=12.3.0
