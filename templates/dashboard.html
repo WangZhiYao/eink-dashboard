@@ -87,9 +87,9 @@
             {% if pomodoro.phase == "work" %}
             <div class="pomo-line">工作中 · <span class="num">剩 {{ pomodoro.remaining }} 分</span></div>
             {% elif pomodoro.phase == "break" %}
-            <div class="pomo-line">走动 · 喝水 · <span class="num">剩 {{ pomodoro.remaining }} 分</span></div>
-            {% elif pomodoro.phase == "lunch" %}
-            <div class="pomo-line">午休 · <span class="num">{{ pomodoro.end_hm }}</span></div>
+            <div class="pomo-line">放松 · <span class="num">剩 {{ pomodoro.remaining }} 分</span></div>
+            {% elif pomodoro.phase == "pause" %}
+            <div class="pomo-line">{{ pomodoro.label }} · <span class="num">{{ pomodoro.end_hm }}</span></div>
             {% endif %}
           {% else %}
             <div class="pomo-off gray">今日已结束</div>

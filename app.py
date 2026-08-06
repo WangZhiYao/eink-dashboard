@@ -68,9 +68,9 @@ def _render_schedule(s):
 def _start_scheduler():
     global _scheduler
     log.info(
-        "eink-dashboard starting | tz=%s render_interval=%dm pomodoro=%d-%d lunch=%s-%s todo_db=%s log_level=%s",
+        "eink-dashboard starting | tz=%s render_interval=%dm pomodoro=%d-%d breaks=%s todo_db=%s log_level=%s",
         settings.tz, settings.render_interval_min, settings.pomodoro_start,
-        settings.pomodoro_end, settings.lunch_start, settings.lunch_end,
+        settings.pomodoro_end, settings.breaks,
         settings.todo_db, settings.log_level,
     )
     todos_db.init_db(settings.todo_db)

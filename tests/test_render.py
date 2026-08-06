@@ -84,25 +84,30 @@ def test_pomodoro_states():
     assert render.pomodoro_state(datetime(2026, 8, 2, 9, 10, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 15}
     assert render.pomodoro_state(datetime(2026, 8, 2, 9, 25, tzinfo=tz)) == {"active": True, "phase": "break", "remaining": 5}
     assert render.pomodoro_state(datetime(2026, 8, 2, 9, 30, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": True, "phase": "lunch", "end_hm": "13:30"}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 0, tzinfo=tz)) == {"active": True, "phase": "lunch", "end_hm": "13:30"}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 30, tzinfo=tz))["phase"] != "lunch"   # lunch ended -> back to cycle
+    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "13:30"}
+    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "13:30"}
+    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 30, tzinfo=tz))["phase"] != "pause"   # pause ended -> back to cycle
+    assert render.pomodoro_state(datetime(2026, 8, 2, 18, 30, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "19:00"}
 
 
-def test_pomodoro_lunch_is_a_true_pause(monkeypatch):
-    # A lunch window that is NOT a multiple of CYCLE_MIN must resume the cycle
-    # exactly where it left off, not jump forward by the lunch duration.
-    monkeypatch.setattr(render.settings, "lunch_start", "12:00")
-    monkeypatch.setattr(render.settings, "lunch_end", "12:45")   # 45 min
+def test_pomodoro_pause_is_a_true_pause(monkeypatch):
+    # 非倍数窗口（45min）：验证午餐和晚餐都是 true pause —— 从时钟扣除，而非穿透。
+    # 注意：break_windows 是 Settings() 构造时解析缓存的派生字段，所以直接 patch
+    # 结构化列表（patch 原始 breaks 字符串不会触发重新解析）。
+    from config import Break
+    monkeypatch.setattr(render.settings, "break_windows", [
+        Break(720, 765, "午休", "12:45"),    # 12:00–12:45
+        Break(1080, 1125, "晚餐", "18:45"),  # 18:00–18:45
+    ])
     tz = ZoneInfo("Asia/Shanghai")
-    # 12:00 -> lunch shown (cycle underneath is at work/pos 0)
-    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": True, "phase": "lunch", "end_hm": "12:45"}
-    # 12:45 (lunch just ended): resume at work remaining 25 — NOT advanced by 45 min
+    # 12:00 命中午休
+    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "12:45"}
+    # 12:45 午休结束 → work remaining 25（45min 已扣除；若穿透会是 work 10）
     assert render.pomodoro_state(datetime(2026, 8, 2, 12, 45, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
-    # continuity: 25 min of work from 12:45 -> break at 13:10 with 5 left
-    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 10, tzinfo=tz)) == {"active": True, "phase": "break", "remaining": 5}
-    # and the next work cycle starts clean at 13:15
-    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 15, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
+    # 18:00 命中晚餐
+    assert render.pomodoro_state(datetime(2026, 8, 2, 18, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "18:45"}
+    # 19:00 晚餐后 → work remaining 25（午+晚共 90min 都已扣除；若不扣晚餐会是 work 10）
+    assert render.pomodoro_state(datetime(2026, 8, 2, 19, 0, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
 
 
 def test_lunar_str():
@@ -207,3 +212,32 @@ def test_render_to_png_propagates_error_from_worker_thread(tmp_path, monkeypatch
 
     with pytest.raises(RuntimeError, match="chromium died"):
         asyncio.run(inside_loop())
+
+
+def _pomodoro_ctx(pomodoro):
+    return {
+        "time_str": "09:41", "date_str": "2026.08.02", "weekday": "星期日",
+        "indoor": render.sht40.Sht40Data(temp=26.0, humidity=42.0, battery=87),
+        "weather": render.weather.WeatherData(
+            current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21, aqi=45,
+            hourly=[{"label": "现在", "text": "多云", "temp": 28, "rain": 34}],
+            sunrise="05:42", sunset="19:08"),
+        "lunar": "六月二十", "pomodoro": pomodoro, "todos": [],
+    }
+
+
+def test_template_pause_branch_uses_label_and_end_hm():
+    # pause 分支由 label 数据驱动：晚餐显示「晚餐 · 19:00」，不再硬编码「午休」
+    html = render.render_html(_pomodoro_ctx(
+        {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "19:00"}))
+    assert "晚餐" in html and "19:00" in html
+    assert "午休" not in html
+
+
+def test_template_break_copy_is_fangsong():
+    # break 短休息文案改为「放松」，不再出现「走动 / 喝水」
+    html = render.render_html(_pomodoro_ctx(
+        {"active": True, "phase": "break", "remaining": 5}))
+    assert "放松" in html
+    assert "走动" not in html
+    assert "喝水" not in html

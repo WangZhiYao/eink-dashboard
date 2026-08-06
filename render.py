@@ -45,19 +45,20 @@ BREAK_MIN = 5
 CYCLE_MIN = WORK_MIN + BREAK_MIN  # 30
 
 
-def _hm_to_min(s: str) -> int:
-    h, m = s.split(":")
-    return int(h) * 60 + int(m)
-
-
 def pomodoro_state(now: datetime) -> dict:
-    """Clock-anchored 25/5 Pomodoro, active during [pomodoro_start, pomodoro_end) hours,
-    with a lunch pause [lunch_start, lunch_end).
+    """Clock-anchored 25/5 Pomodoro, active during [pomodoro_start, pomodoro_end),
+    with configurable meal/rest pauses (BREAKS). Each pause is a *true pause*: it's
+    folded out of the clock so the cycle resumes where it left off, rather than
+    advancing through it.
 
     Pre-render lookahead: during the final render_interval_min before `start`
     (e.g. 8:55-8:59), show the upcoming start state so the image is ready when
     SenseCraft pulls at 9:00. With renders aligned to 5-min boundaries, work
-    shows remaining 25/20/15/10/5 and the break only ever shows '剩 5 分'.
+    shows remaining 25/20/15/10/5 and break only ever shows '剩 5 分'.
+
+    Lookahead only fires in the pre-start window (morning), so it can never land
+    inside a midday/evening pause — fold only needs to consider windows fully
+    before `eff_min` (eff_min >= b.end).
     """
     start, end = settings.pomodoro_start, settings.pomodoro_end
     now_min = now.hour * 60 + now.minute
@@ -68,14 +69,17 @@ def pomodoro_state(now: datetime) -> dict:
         eff_min = now_min
     if eff_min // 60 < start or eff_min // 60 >= end:
         return {"active": False}
-    lunch_start, lunch_end = _hm_to_min(settings.lunch_start), _hm_to_min(settings.lunch_end)
-    if lunch_start <= now_min < lunch_end:
-        return {"active": True, "phase": "lunch", "end_hm": settings.lunch_end}
-    # Fold the lunch window out of the clock so the cycle resumes where it left
-    # off after lunch (a true pause), instead of advancing through it. No-op when
-    # the lunch duration happens to be a multiple of CYCLE_MIN.
-    adj = eff_min - (lunch_end - lunch_start) if eff_min >= lunch_end else eff_min
-    pos = (adj - start_min) % CYCLE_MIN
+    for b in settings.break_windows:
+        if b.start <= now_min < b.end:
+            return {"active": True, "phase": "pause", "label": b.label, "end_hm": b.end_hm}
+    # Fold every pause window that has fully passed out of the clock, so the cycle
+    # resumes where it left off after each pause (a true pause). No-op when total
+    # pause duration before now happens to be a multiple of CYCLE_MIN.
+    folded = eff_min
+    for b in settings.break_windows:
+        if eff_min >= b.end:
+            folded -= (b.end - b.start)
+    pos = (folded - start_min) % CYCLE_MIN
     if pos < WORK_MIN:
         return {"active": True, "phase": "work", "remaining": WORK_MIN - pos}
     return {"active": True, "phase": "break", "remaining": CYCLE_MIN - pos}
