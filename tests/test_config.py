@@ -1,7 +1,7 @@
 import os
 import pytest
 from pydantic import ValidationError
-from config import Settings, Break
+from config import Settings, Break, pomodoro_effective_end
 
 def test_settings_read_from_env(monkeypatch):
     monkeypatch.setenv("SENSECRAFT_DEVICE_ID", "123")
@@ -82,3 +82,25 @@ def test_break_outside_pomodoro_window_allowed(monkeypatch):
     _required_env(monkeypatch)
     s = Settings(breaks="00:00-01:00=深夜")
     assert s.break_windows == [Break(0, 60, "深夜", "01:00")]
+
+
+def test_pomodoro_end_friday_default(monkeypatch):
+    _required_env(monkeypatch)
+    s = Settings()
+    assert s.pomodoro_end_friday == 18   # Friday ends at 6 PM by default
+
+
+def test_pomodoro_effective_end():
+    """Friday (weekday 4) returns pomodoro_end_friday; all other days return pomodoro_end."""
+    s = Settings(
+        sensecraft_device_id="x", sensecraft_api_key="x",
+        qweather_host="x", qweather_api_key="x",
+        pomodoro_end=21, pomodoro_end_friday=18,
+    )
+    assert pomodoro_effective_end(s, 0) == 21  # Monday
+    assert pomodoro_effective_end(s, 1) == 21  # Tuesday
+    assert pomodoro_effective_end(s, 2) == 21  # Wednesday
+    assert pomodoro_effective_end(s, 3) == 21  # Thursday
+    assert pomodoro_effective_end(s, 4) == 18  # Friday
+    assert pomodoro_effective_end(s, 5) == 21  # Saturday
+    assert pomodoro_effective_end(s, 6) == 21  # Sunday

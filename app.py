@@ -47,36 +47,47 @@ _scheduler = None
 
 
 def _render_schedule(s):
-    """Cron (job_id, hour, minute) for each render job, derived from settings.
+    """Cron (job_id, hour, minute, day_of_week) for each render job, derived from settings.
 
     Pure function so the daily schedule is unit-testable without booting a live
     scheduler / DB / Chromium. Consumed by _start_scheduler() below.
+
+    Friday uses pomodoro_end_friday; Mon-Thu use pomodoro_end. When they match,
+    a single set of jobs covers all workdays.
     """
-    return [
-        # every render_interval_min during the work window [start, end)
-        ("render_day", f"{s.pomodoro_start}-{s.pomodoro_end - 1}", f"*/{s.render_interval_min}"),
-        # one final render at the top of pomodoro_end (e.g. 21:00), then the screen
-        # holds its last image overnight — no e-ink flashes / Chromium CPU until the
-        # next day's pre-render. Without this the last render was 20:55 (render_day's
-        # hour field "9-20" is inclusive, so hour 21 never fired).
-        ("render_final", str(s.pomodoro_end), "0"),
-        # pre-render just before the day starts (e.g. 8:55) so the 9:00 pull gets a fresh image
-        ("render_prerender", str(s.pomodoro_start - 1), str(60 - s.render_interval_min)),
-    ]
+    fri_end = s.pomodoro_end_friday
+    jobs = []
+
+    if s.pomodoro_end == fri_end:
+        # Same end time for all workdays — single set of jobs
+        jobs.append(("render_day", f"{s.pomodoro_start}-{s.pomodoro_end - 1}", f"*/{s.render_interval_min}", "mon-fri"))
+        jobs.append(("render_final", str(s.pomodoro_end), "0", "mon-fri"))
+    else:
+        # Mon-Thu: use pomodoro_end (e.g. 21:00)
+        jobs.append(("render_day_mon_thu", f"{s.pomodoro_start}-{s.pomodoro_end - 1}", f"*/{s.render_interval_min}", "mon-thu"))
+        jobs.append(("render_final_mon_thu", str(s.pomodoro_end), "0", "mon-thu"))
+        # Friday: use pomodoro_end_friday (e.g. 18:00)
+        jobs.append(("render_day_fri", f"{s.pomodoro_start}-{fri_end - 1}", f"*/{s.render_interval_min}", "fri"))
+        jobs.append(("render_final_fri", str(fri_end), "0", "fri"))
+
+    # pre-render just before the day starts (e.g. 8:55) — Mon-Fri
+    jobs.append(("render_prerender", str(s.pomodoro_start - 1), str(60 - s.render_interval_min), "mon-fri"))
+
+    return jobs
 
 
 def _start_scheduler():
     global _scheduler
     log.info(
-        "eink-dashboard starting | tz=%s render_interval=%dm pomodoro=%d-%d breaks=%s todo_db=%s log_level=%s",
+        "eink-dashboard starting | tz=%s render_interval=%dm pomodoro=%d-%d(mon-thu)/%d(fri) breaks=%s todo_db=%s log_level=%s",
         settings.tz, settings.render_interval_min, settings.pomodoro_start,
-        settings.pomodoro_end, settings.breaks,
+        settings.pomodoro_end, settings.pomodoro_end_friday, settings.breaks,
         settings.todo_db, settings.log_level,
     )
     todos_db.init_db(settings.todo_db)
     _scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.tz))
-    for job_id, hour, minute in _render_schedule(settings):
-        _scheduler.add_job(render_now, "cron", hour=hour, minute=minute, id=job_id)
+    for job_id, hour, minute, day_of_week in _render_schedule(settings):
+        _scheduler.add_job(render_now, "cron", hour=hour, minute=minute, day_of_week=day_of_week, id=job_id)
     _scheduler.start()
     # render once immediately so the first serve isn't empty
     try:

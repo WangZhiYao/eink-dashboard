@@ -90,6 +90,20 @@ def test_pomodoro_states():
     assert render.pomodoro_state(datetime(2026, 8, 2, 18, 30, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "19:00"}
 
 
+def test_pomodoro_friday_ends_early():
+    """Friday uses pomodoro_end_friday (18) — window closes at 18:00 instead of 21:00."""
+    tz = ZoneInfo("Asia/Shanghai")
+    # 2026-08-07 is a Friday
+    # 17:55 — still active (inside Friday window)
+    assert render.pomodoro_state(datetime(2026, 8, 7, 17, 55, tzinfo=tz))["active"] is True
+    # 18:00 — inactive (end is exclusive, Friday window closed)
+    assert render.pomodoro_state(datetime(2026, 8, 7, 18, 0, tzinfo=tz)) == {"active": False}
+    # 20:00 — would be active on Mon-Thu, but inactive on Friday
+    assert render.pomodoro_state(datetime(2026, 8, 7, 20, 0, tzinfo=tz)) == {"active": False}
+    # 21:00 — same, inactive on Friday
+    assert render.pomodoro_state(datetime(2026, 8, 7, 21, 0, tzinfo=tz)) == {"active": False}
+
+
 def test_pomodoro_pause_is_a_true_pause(monkeypatch):
     # 非倍数窗口（45min）：验证午餐和晚餐都是 true pause —— 从时钟扣除，而非穿透。
     # 注意：break_windows 是 Settings() 构造时解析缓存的派生字段，所以直接 patch

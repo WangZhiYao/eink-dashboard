@@ -51,6 +51,17 @@ def _parse_breaks(s: str) -> list:
     return windows
 
 
+def pomodoro_effective_end(settings: "Settings", now_weekday: int) -> int:
+    """Return the pomodoro end hour for the given weekday.
+
+    now_weekday: 0=Monday … 4=Friday, 5=Saturday, 6=Sunday (Python weekday()).
+    Friday uses pomodoro_end_friday; all other days use pomodoro_end.
+    """
+    if now_weekday == 4:  # Friday
+        return settings.pomodoro_end_friday
+    return settings.pomodoro_end
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -62,7 +73,8 @@ class Settings(BaseSettings):
     render_interval_min: int = Field(5, ge=1, le=59)      # daytime refresh rate (minutes); SenseCraft widget should match
     weather_cache_min: int = 30       # cache QWeather responses for this many minutes
     pomodoro_start: int = Field(9, ge=1, le=23)           # Pomodoro + fast-refresh window start hour
-    pomodoro_end: int = Field(21, ge=2, le=23)            # Pomodoro + fast-refresh window end hour (exclusive)
+    pomodoro_end: int = Field(21, ge=2, le=23)            # Pomodoro + fast-refresh window end hour (exclusive), Mon-Thu
+    pomodoro_end_friday: int = Field(18, ge=2, le=23)     # Pomodoro end hour on Fridays (exclusive)
     breaks: str = "12:00-13:30=午休,18:00-19:00=晚餐"   # 用餐/休息暂停时段；格式 HH:MM-HH:MM=标签，逗号分隔多条
     break_windows: list = Field(default_factory=list, exclude=True, repr=False)   # 派生字段：_parse_breaks validator 填充，勿直接配
     admin_username: str = "admin"      # Basic-auth username for /todos + /api/todos

@@ -7,7 +7,7 @@ import lunardate
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from config import settings
+from config import settings, pomodoro_effective_end
 from fetchers import sht40, weather
 from todos import db as todos_db
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -60,7 +60,8 @@ def pomodoro_state(now: datetime) -> dict:
     inside a midday/evening pause — fold only needs to consider windows fully
     before `eff_min` (eff_min >= b.end).
     """
-    start, end = settings.pomodoro_start, settings.pomodoro_end
+    start = settings.pomodoro_start
+    end = pomodoro_effective_end(settings, now.weekday())
     now_min = now.hour * 60 + now.minute
     start_min = start * 60
     if start_min - settings.render_interval_min <= now_min < start_min:
