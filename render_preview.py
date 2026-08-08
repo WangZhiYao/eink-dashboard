@@ -31,6 +31,24 @@ CTX = {
     ],
     "day_type": "workday",
     "day_name": "",
+    "gold": render.gold_fetcher.GoldData(
+        current=760.50,
+        open=755.00,
+        high=762.80,
+        low=753.20,
+        points=[
+            {"time": "09:00:00", "price": 755.00},
+            {"time": "09:30:00", "price": 756.50},
+            {"time": "10:00:00", "price": 758.20},
+            {"time": "10:30:00", "price": 757.10},
+            {"time": "11:00:00", "price": 759.30},
+            {"time": "11:30:00", "price": 761.00},
+            {"time": "13:00:00", "price": 760.50},
+            {"time": "13:30:00", "price": 762.80},
+            {"time": "14:00:00", "price": 761.50},
+            {"time": "14:30:00", "price": 760.50},
+        ],
+    ),
 }
 
 render.render_to_png(CTX, "static/preview.png")

@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 import render
 from fetchers.sht40 import Sht40Data
 from fetchers.weather import WeatherData
+from fetchers.gold import GoldData
 
 
 def test_build_context_assembles_fields(monkeypatch):
@@ -335,5 +336,116 @@ def test_template_shows_prio_markers():
     assert '<span class="pmark high">●</span>' in html
     assert '<span class="pmark normal">●</span>' in html
     assert '<span class="pmark low">○</span>' in html
+
+
+def test_build_context_includes_gold(monkeypatch):
+    """build_context must include a 'gold' key with GoldData from the cache."""
+    # stub weather + indoor + todos
+    monkeypatch.setattr(render.sht40, "fetch_sht40",
+                        lambda *a, **k: Sht40Data(temp=26.0, humidity=42.0, battery=87))
+    monkeypatch.setattr(render.weather, "fetch_weather",
+                        lambda *a, **k: WeatherData(current={"temp": 28}))
+    render._weather_cache.clear()
+    render._gold_cache.clear()
+    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [])
+
+    # stub gold fetch
+    mock_gold = GoldData(current=760.5, open=755.0, high=762.8, low=753.2,
+                         points=[{"time": "09:00:00", "price": 755.0},
+                                 {"time": "10:00:00", "price": 760.5}])
+    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday",
+                        lambda symbol: mock_gold)
+
+    ctx = render.build_context(now=datetime(2026, 8, 3, 10, 0))
+    assert ctx["gold"] is not None
+    assert ctx["gold"].current == 760.5
+    assert ctx["gold"].open == 755.0
+    assert len(ctx["gold"].points) == 2
+
+
+def test_gold_cache_reuses_within_window(monkeypatch):
+    """Gold cache reuses data within weather_cache_min and same hour."""
+    render._gold_cache.clear()
+    calls = []
+    mock_gold = GoldData(current=760.5)
+    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday",
+                        lambda symbol: (calls.append(1), mock_gold)[1])
+
+    render._fetch_gold_cached()        # fetch
+    render._fetch_gold_cached()        # served from cache
+    assert len(calls) == 1
+    render._gold_cache["ts"] = 0.0     # expire TTL
+    render._gold_cache["hour"] = -1    # cross hour boundary
+    render._fetch_gold_cached()        # refetch
+    assert len(calls) == 2
+
+
+def test_gold_cache_falls_back_to_stale(monkeypatch):
+    """A failed re-fetch returns stale cache, not None."""
+    render._gold_cache.clear()
+    good = GoldData(current=760.5)
+    calls = []
+
+    def fetch_then_fail(symbol):
+        calls.append(1)
+        if len(calls) == 1:
+            return good
+        raise RuntimeError("akshare down")
+
+    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday", fetch_then_fail)
+    first = render._fetch_gold_cached()          # succeeds
+    assert first.current == 760.5
+    render._gold_cache["ts"] = 0.0               # force cache miss
+    render._gold_cache["hour"] = -1
+    second = render._fetch_gold_cached()          # fetch raises -> fall back
+    assert second.current == 760.5                # stale data served
+    assert len(calls) == 2
+
+
+def test_template_gold_card_renders_chart():
+    """Template must render the gold card with chart SVG when data is present."""
+    ctx = _pomodoro_ctx({"active": True, "phase": "work", "remaining": 20})
+    ctx["gold"] = GoldData(
+        current=760.50, open=755.00, high=762.80, low=753.20,
+        points=[{"time": "09:00:00", "price": 755.0},
+                {"time": "10:00:00", "price": 760.5}],
+    )
+    html = render.render_html(ctx)
+    # Card header
+    assert "Au99.99" in html
+    assert "760.50" in html
+    # SVG chart
+    assert "<polyline" in html
+    assert 'stroke="#0a0a0a"' in html
+    # Summary row
+    assert "755.00" in html
+    assert "762.80" in html
+    assert "753.20" in html
+
+
+def test_template_gold_card_shows_placeholder_when_no_data():
+    """Gold card shows '--' when gold is None (fetch failed, no cache)."""
+    ctx = _pomodoro_ctx({"active": True, "phase": "work", "remaining": 20})
+    ctx["gold"] = None
+    html = render.render_html(ctx)
+    assert "Au99.99" in html          # card header still renders
+    assert "--" in html               # placeholder
+    assert "<polyline" not in html    # no chart
+
+
+def test_gold_chart_svg_empty_points():
+    """gold_chart_svg returns placeholder when points list is empty."""
+    svg = render.gold_chart_svg([])
+    assert "--" in svg
+    assert "<polyline" not in svg
+
+
+def test_gold_chart_svg_zero_range():
+    """gold_chart_svg handles flat price (lo == hi) without division by zero."""
+    svg = render.gold_chart_svg([
+        {"time": "09:00:00", "price": 755.0},
+        {"time": "10:00:00", "price": 755.0},
+    ])
+    assert "<polyline" in svg       # still renders the line (flat)
 
 

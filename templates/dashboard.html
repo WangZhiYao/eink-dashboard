@@ -65,22 +65,18 @@
 
     <div class="col-stack">
       <div class="card">
-        <div class="hd">逐时</div>
+        <div class="hd">Au99.99{% if gold and gold.current is not none %} · <span class="num">{{ "%.2f"|format(gold.current) }}</span>{% endif %}</div>
         <div class="bd">
-          <div class="hrow hhead">
-            <span class="htime">时间</span>
-            <span class="hcond">天气</span>
-            <span class="hpop">降水概率</span>
-            <span class="htemp">温度</span>
+          {% if gold and gold.points %}
+          {{ gold_chart_svg(gold.points, 166, 64) | safe }}
+          <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:#5f5f5f;">
+            <span>开 <span class="num">{{ "%.2f"|format(gold.open) if gold.open is not none else '--' }}</span></span>
+            <span>高 <span class="num">{{ "%.2f"|format(gold.high) if gold.high is not none else '--' }}</span></span>
+            <span>低 <span class="num">{{ "%.2f"|format(gold.low) if gold.low is not none else '--' }}</span></span>
           </div>
-          {% for h in weather.hourly[1:4] %}
-          <div class="hrow">
-            <span class="htime">{{ h.label }}</span>
-            <span class="hcond">{{ h.text }}</span>
-            <span class="hpop num">{{ h.rain }}%</span>
-            <span class="htemp num">{{ h.temp if h.temp is not none else '—' }}°</span>
-          </div>
-          {% endfor %}
+          {% else %}
+          <div style="text-align:center;padding:16px 0;color:#5f5f5f;font-size:14px;">--</div>
+          {% endif %}
         </div>
       </div>
       <div class="card pomo">

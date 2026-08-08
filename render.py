@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from config import settings
 from daytypes import calendar  # 模块级单例（Calendar.load(settings.calendar_file)）
 from fetchers import sht40, weather
+from fetchers import gold as gold_fetcher
 from todos import db as todos_db
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.sync_api import sync_playwright
@@ -83,6 +84,8 @@ def pomodoro_state(now: datetime) -> dict:
 
 _weather_cache = {"data": None, "ts": 0.0}
 
+_gold_cache = {"data": None, "ts": 0.0, "hour": None}
+
 
 def _fetch_weather_cached() -> weather.WeatherData:
     """Serve cached QWeather data while within weather_cache_min AND the same hour;
@@ -108,6 +111,33 @@ def _fetch_weather_cached() -> weather.WeatherData:
     return data
 
 
+def _fetch_gold_cached() -> gold_fetcher.GoldData | None:
+    """Serve cached gold data within the same cache window and hour; otherwise
+    re-fetch. Returns None when no data is available (never cached and fetch
+    failed)."""
+    now = time.monotonic()
+    cur_hour = datetime.now(ZoneInfo(settings.tz)).hour
+    cached = _gold_cache.get("data")
+    if (cached is not None
+            and now - _gold_cache.get("ts", 0.0) < calendar.weather_cache_min * 60
+            and _gold_cache.get("hour") == cur_hour):
+        return cached
+    try:
+        data = gold_fetcher.fetch_gold_intraday("Au99.99")
+    except Exception:
+        log.warning("gold fetch failed; serving %s", "stale cache" if cached is not None else "degraded", exc_info=True)
+        return cached if cached is not None else None
+    # Don't cache empty data (prevents a transient empty response from poisoning
+    # the cache for the rest of the hour).
+    if data.current is None and cached is not None:
+        log.warning("gold fetch returned empty; keeping stale cache")
+        return cached
+    _gold_cache["data"] = data
+    _gold_cache["ts"] = now
+    _gold_cache["hour"] = cur_hour
+    return data
+
+
 def _todos_for_dashboard() -> list:
     """Not-done todos for the dashboard (<=6, prio-sorted). Empty on any error."""
     try:
@@ -127,6 +157,7 @@ def build_context(now: datetime | None = None) -> dict:
         log.warning("indoor (SHT40) fetch failed; serving degraded", exc_info=True)
         indoor = sht40.Sht40Data(temp=None, humidity=None, battery=None)
     wx = _fetch_weather_cached()
+    g = _fetch_gold_cached()
     return {
         "time_str": now.strftime("%H:%M"),
         "date_str": now.strftime("%Y.%m.%d"),
@@ -138,6 +169,7 @@ def build_context(now: datetime | None = None) -> dict:
         "todos": _todos_for_dashboard(),
         "day_name": dt.name or "",
         "day_type": dt.type_name,
+        "gold": g,
     }
 
 
@@ -179,6 +211,70 @@ def prio_marker(prio: str) -> str:
     """Priority marker glyph for the e-ink dashboard. Shape only distinguishes
     solid vs hollow; color comes from the CSS class (.pmark.normal = gray)."""
     return _PRIO_MARKERS.get(prio, "●")
+
+
+def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
+    """Build an inline monochrome SVG line chart from gold data points.
+    Returns an <svg> element with a polyline — no JS, no external deps."""
+    if not points or len(points) < 1:
+        return '<svg class="ic" viewBox="0 0 %d %d"><text x="%d" y="%d" text-anchor="middle" font-size="12" fill="#5f5f5f">--</text></svg>' % (width, height, width // 2, height // 2 + 4)
+
+    prices = [p["price"] for p in points]
+    lo, hi = min(prices), max(prices)
+    if hi == lo:
+        hi = lo + 1.0  # avoid zero-range
+
+    # Y scale with 10% padding
+    pad = (hi - lo) * 0.1
+    y_min, y_max = lo - pad, hi + pad
+
+    # Padding: horizontal prevents label/dot clipping; vertical reserves space
+    # below the chart for time labels so the polyline doesn't overlap them.
+    pad_x = 10
+    pad_y_bottom = 12
+    pad_y_top = 6
+    chart_w = width - 2 * pad_x
+    chart_h = height - pad_y_top - pad_y_bottom
+
+    def _x(i: int) -> float:
+        return pad_x + (i / max(len(points) - 1, 1)) * chart_w
+
+    def _y(price: float) -> float:
+        return pad_y_top + chart_h - ((price - y_min) / (y_max - y_min)) * chart_h
+
+    # Build polyline points string
+    pts = " ".join(f"{_x(i):.1f},{_y(p):.1f}" for i, p in enumerate(prices))
+
+    # X-axis time labels: pick ~4 evenly-spaced labels
+    n = len(points)
+    indices = [0, n // 3, 2 * n // 3, n - 1] if n >= 4 else [0, n - 1]
+    # Deduplicate (if n is small)
+    seen = set()
+    labels = []
+    for idx in indices:
+        if idx not in seen and 0 <= idx < n:
+            seen.add(idx)
+            t = points[idx]["time"]
+            short = t[:5] if len(t) >= 5 else t
+            labels.append((_x(idx), short))
+
+    label_html = "".join(
+        f'<text x="{x:.1f}" y="{height - 2}" text-anchor="middle" font-size="7" fill="#5f5f5f">{label}</text>'
+        for x, label in labels
+    )
+    # Current price dot at the end
+    last_x, last_y = _x(len(points) - 1), _y(prices[-1])
+
+    return (
+        f'<svg class="ic" viewBox="0 0 {width} {height}" style="width:100%;height:auto;">'
+        f'<polyline points="{pts}" fill="none" stroke="#0a0a0a" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="2.5" fill="#0a0a0a"/>'
+        f'{label_html}'
+        f'</svg>'
+    )
+
+
+_env.globals["gold_chart_svg"] = gold_chart_svg
 
 
 def wx_icon_svg(code: str) -> str:
