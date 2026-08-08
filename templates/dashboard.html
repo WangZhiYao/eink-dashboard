@@ -55,7 +55,7 @@
         <div class="wx-temp num">{{ wx_icon_svg(weather.current.icon) | safe }} {{ weather.current.temp if weather.current.temp is not none else '—' }}°</div>
         <div style="font-size:15px;">{{ weather.current.text }}</div>
         <div class="gray num" style="font-size:13px;">Hi {{ weather.hi if weather.hi is not none else '—' }} / Lo {{ weather.lo if weather.lo is not none else '—' }} · AQI {{ weather.aqi if weather.aqi is not none else '—' }}</div>
-        <div class="gray" style="font-size:13px;">体感 <span class="num">{{ weather.current.feels_like if weather.current.feels_like is not none else '—' }}°</span> · 降水 <span class="num">{{ weather.rain_chance if weather.rain_chance is not none else '—' }}%</span></div>
+        <div class="gray" style="font-size:13px;">体感 <span class="num">{{ weather.current.feels_like if weather.current.feels_like is not none else '—' }}°</span> · 降水概率 <span class="num">{{ weather.rain_chance if weather.rain_chance is not none else '—' }}%</span></div>
       </div>
     </div>
   </div>
@@ -70,7 +70,7 @@
           <div class="hrow hhead">
             <span class="htime">时间</span>
             <span class="hcond">天气</span>
-            <span class="hpop">降水</span>
+            <span class="hpop">降水概率</span>
             <span class="htemp">温度</span>
           </div>
           {% for h in weather.hourly[1:4] %}
