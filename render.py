@@ -1,13 +1,18 @@
 import asyncio
+import base64
+import io
 import logging
 import os
 import threading
 import time
 import lunardate
+import httpx
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from PIL import Image, ImageOps
 
-from config import settings, pomodoro_effective_end
+from config import settings
+from daytypes import calendar  # 模块级单例（Calendar.load(settings.calendar_file)）
 from fetchers import sht40, weather
 from todos import db as todos_db
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -46,41 +51,35 @@ CYCLE_MIN = WORK_MIN + BREAK_MIN  # 30
 
 
 def pomodoro_state(now: datetime) -> dict:
-    """Clock-anchored 25/5 Pomodoro, active during [pomodoro_start, pomodoro_end),
-    with configurable meal/rest pauses (BREAKS). Each pause is a *true pause*: it's
-    folded out of the clock so the cycle resumes where it left off, rather than
-    advancing through it.
+    """Clock-anchored 25/5 Pomodoro, active during the day-type's window,
+    with calendar breaks as *true pauses* (folded out of the clock).
+    Rest days (weekends / holidays) return inactive — no pomodoro there.
 
     Pre-render lookahead: during the final render_interval_min before `start`
     (e.g. 8:55-8:59), show the upcoming start state so the image is ready when
-    SenseCraft pulls at 9:00. With renders aligned to 5-min boundaries, work
-    shows remaining 25/20/15/10/5 and break only ever shows '剩 5 分'.
-
-    Lookahead only fires in the pre-start window (morning), so it can never land
-    inside a midday/evening pause — fold only needs to consider windows fully
-    before `eff_min` (eff_min >= b.end).
+    SenseCraft pulls at 9:00. Lookahead only fires in the pre-start window
+    (morning), so it can never land inside a midday/evening pause.
     """
-    start = settings.pomodoro_start
-    end = pomodoro_effective_end(settings, now.weekday())
+    dt = calendar.day_type(now.date())
+    if dt.simple or dt.start is None or dt.end is None:
+        return {"active": False}
     now_min = now.hour * 60 + now.minute
-    start_min = start * 60
-    if start_min - settings.render_interval_min <= now_min < start_min:
-        eff_min = start_min            # 8:55-8:59 -> show the 9:00 start state
+    if dt.start - calendar.render_interval_min <= now_min < dt.start:
+        eff_min = dt.start            # 8:55-8:59 -> show the 9:00 start state
     else:
         eff_min = now_min
-    if eff_min // 60 < start or eff_min // 60 >= end:
+    if eff_min < dt.start or eff_min >= dt.end:
         return {"active": False}
-    for b in settings.break_windows:
+    for b in calendar.breaks:
         if b.start <= now_min < b.end:
             return {"active": True, "phase": "pause", "label": b.label, "end_hm": b.end_hm}
-    # Fold every pause window that has fully passed out of the clock, so the cycle
-    # resumes where it left off after each pause (a true pause). No-op when total
-    # pause duration before now happens to be a multiple of CYCLE_MIN.
+    # Fold every pause window that has fully passed out of the clock, so the
+    # cycle resumes where it left off after each pause (a true pause).
     folded = eff_min
-    for b in settings.break_windows:
+    for b in calendar.breaks:
         if eff_min >= b.end:
             folded -= (b.end - b.start)
-    pos = (folded - start_min) % CYCLE_MIN
+    pos = (folded - dt.start) % CYCLE_MIN
     if pos < WORK_MIN:
         return {"active": True, "phase": "work", "remaining": WORK_MIN - pos}
     return {"active": True, "phase": "break", "remaining": CYCLE_MIN - pos}
@@ -97,7 +96,7 @@ def _fetch_weather_cached() -> weather.WeatherData:
     cur_hour = datetime.now(ZoneInfo(settings.tz)).hour
     cached = _weather_cache.get("data")
     if (cached is not None
-            and now - _weather_cache.get("ts", 0.0) < settings.weather_cache_min * 60
+            and now - _weather_cache.get("ts", 0.0) < calendar.weather_cache_min * 60
             and _weather_cache.get("hour") == cur_hour):
         return cached
     try:
@@ -124,6 +123,7 @@ def _todos_for_dashboard() -> list:
 
 def build_context(now: datetime | None = None) -> dict:
     now = now or datetime.now(ZoneInfo(settings.tz))
+    dt = calendar.day_type(now.date())
     try:
         indoor = sht40.fetch_sht40(settings.sensecraft_device_id, settings.sensecraft_api_key)
     except Exception:
@@ -140,6 +140,8 @@ def build_context(now: datetime | None = None) -> dict:
         "lunar": _lunar_str(now),
         "pomodoro": pomodoro_state(now),
         "todos": _todos_for_dashboard(),
+        "day_name": dt.name or "",
+        "day_type": dt.type_name,
     }
 
 
@@ -205,8 +207,7 @@ def _screenshot(html_str: str, out_path: str) -> None:
         browser.close()
 
 
-def render_to_png(context: dict, out_path: str = OUT_PATH) -> None:
-    html_str = render_html(context)
+def _html_to_png(html_str: str, out_path: str) -> None:
     root, ext = os.path.splitext(out_path)
     tmp = f"{root}.tmp{ext}"          # keep .png suffix — Playwright infers format from extension
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)   # Fix #5: ensure dir exists
@@ -241,7 +242,48 @@ def render_to_png(context: dict, out_path: str = OUT_PATH) -> None:
     os.replace(tmp, out_path)
 
 
+def render_to_png(context: dict, out_path: str = OUT_PATH) -> None:
+    _html_to_png(render_html(context), out_path)
+
+
+def render_rest_html(context: dict) -> str:
+    return _env.get_template("rest.html").render(**context)
+
+
+def _fetch_rest_image(url: str) -> str | None:
+    """Fetch a rest-day image, convert to e-ink grayscale, return base64 data
+    URI. Any failure (network / decode / format) degrades to None so the
+    screen still renders text-only — one broken image must not blank a day."""
+    try:
+        resp = httpx.get(url, timeout=10.0, follow_redirects=True)
+        resp.raise_for_status()
+        im = Image.open(io.BytesIO(resp.content)).convert("L")
+        im.thumbnail((744, 300))
+        im = ImageOps.autocontrast(im)
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        log.warning("rest image fetch failed; rendering text-only", exc_info=True)
+        return None
+
+
+def build_rest_context(now: datetime, dt) -> dict:
+    return {
+        "weekday": WEEKDAYS[now.weekday()],
+        "date_str": now.strftime("%Y.%m.%d"),
+        "lunar": _lunar_str(now),
+        "day_name": dt.name or "",
+        "image": _fetch_rest_image(dt.image) if dt.image else None,
+    }
+
+
+def render_rest_to_png(context: dict, out_path: str = OUT_PATH) -> None:
+    _html_to_png(render_rest_html(context), out_path)
+
+
 _render_lock = threading.Lock()
+_rest_rendered: set = set()
 
 
 def render_now() -> None:
@@ -254,3 +296,31 @@ def render_now() -> None:
             log.info("rendered %s", OUT_PATH)
         except Exception:
             log.exception("render failed")
+
+
+def render_tick(now: datetime | None = None) -> None:
+    """Scheduler entry: decide per day-type whether/how to render.
+
+    workday/friday: full render inside [start, end) (plus the pre-render
+    lookahead window); rest: render the simplified screen once, at/after
+    render_at, remembered per date in-process. If a rest render fails the
+    date stays marked — the previous frame stays on screen and it is
+    retried on the next rest day.
+    """
+    now = now or datetime.now(ZoneInfo(settings.tz))
+    now_min = now.hour * 60 + now.minute
+    dt = calendar.day_type(now.date())
+    if dt.simple:
+        if now.date() in _rest_rendered or dt.render_at is None or now_min < dt.render_at:
+            return
+        _rest_rendered.add(now.date())
+        with _render_lock:
+            try:
+                render_rest_to_png(build_rest_context(now, dt))
+                log.info("rendered rest screen for %s", now.date())
+            except Exception:
+                log.exception("rest render failed")
+        return
+    if dt.start - calendar.render_interval_min <= now_min < dt.start \
+            or dt.start <= now_min < dt.end:
+        render_now()

@@ -8,8 +8,11 @@ services:
     environment:
       # todos live on the persisted volume (bind-mounted ./data)
       TODO_DB: /app/data/todos.db
+      # calendar is the single source of truth for schedule/behavior
+      CALENDAR_FILE: /app/calendar.json
     volumes:
       - ./data:/app/data
+      - ./calendar.json:/app/calendar.json
     ports:
       # localhost only — the host nginx reverse-proxies public HTTPS to this
       - "127.0.0.1:8000:8000"

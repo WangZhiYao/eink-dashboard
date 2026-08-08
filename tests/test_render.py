@@ -1,5 +1,6 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import io
 import render
 from fetchers.sht40 import Sht40Data
 from fetchers.weather import WeatherData
@@ -19,9 +20,35 @@ def test_build_context_assembles_fields(monkeypatch):
     assert ctx["weekday"] == "星期日"
     assert ctx["indoor"].temp == 26.0
     assert ctx["weather"].hi == 29
-    assert ctx["pomodoro"] == {"active": True, "phase": "work", "remaining": 14}
+    # 2026-08-02 is a Sunday — now a rest day, so no pomodoro state
+    assert ctx["pomodoro"] == {"active": False}
     assert ctx["lunar"] == "六月二十"
     assert ctx["todos"][0].title == "回复邮件"
+
+
+def test_build_context_includes_day_name_and_type(monkeypatch):
+    from daytypes import Calendar
+    monkeypatch.setattr(render, "calendar",
+                        Calendar({"overrides": {"2026-10-01": {"type": "rest", "name": "国庆节"}}}))
+    monkeypatch.setattr(render.sht40, "fetch_sht40",
+                        lambda *a, **k: Sht40Data(temp=26.0, humidity=42.0, battery=87))
+    monkeypatch.setattr(render.weather, "fetch_weather",
+                        lambda *a, **k: WeatherData(current={"temp": 28}))
+    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [])
+    render._weather_cache.clear()
+    ctx = render.build_context(now=datetime(2026, 10, 1, 9, 0))
+    assert ctx["day_type"] == "rest" and ctx["day_name"] == "国庆节"
+    ctx2 = render.build_context(now=datetime(2026, 8, 3, 9, 0))   # Monday
+    assert ctx2["day_type"] == "workday" and ctx2["day_name"] == ""
+
+
+def test_template_date_row_shows_day_name():
+    ctx = _pomodoro_ctx({"active": True, "phase": "work", "remaining": 20})
+    ctx["day_name"] = "国庆节"
+    assert "· 国庆节" in render.render_html(ctx)
+    ctx2 = _pomodoro_ctx({"active": True, "phase": "work", "remaining": 20})
+    ctx2["day_name"] = ""
+    assert "· 国庆节" not in render.render_html(ctx2)
 
 
 import os
@@ -29,6 +56,7 @@ import asyncio
 import threading
 import time
 import pytest
+from pathlib import Path
 from PIL import Image
 
 def test_render_to_png_produces_800x480(tmp_path, monkeypatch):
@@ -76,22 +104,30 @@ def test_render_to_png_works_inside_running_event_loop(tmp_path, monkeypatch):
 
 def test_pomodoro_states():
     tz = ZoneInfo("Asia/Shanghai")
-    assert render.pomodoro_state(datetime(2026, 8, 2, 8, 30, tzinfo=tz)) == {"active": False}   # before lookahead window
-    assert render.pomodoro_state(datetime(2026, 8, 2, 8, 55, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}   # 8:55 pre-render lookahead -> 9:00 state
-    assert render.pomodoro_state(datetime(2026, 8, 2, 8, 59, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}   # still lookahead
-    assert render.pomodoro_state(datetime(2026, 8, 2, 21, 0, tzinfo=tz)) == {"active": False}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 9, 0, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 9, 10, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 15}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 9, 25, tzinfo=tz)) == {"active": True, "phase": "break", "remaining": 5}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 9, 30, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "13:30"}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "13:30"}
-    assert render.pomodoro_state(datetime(2026, 8, 2, 13, 30, tzinfo=tz))["phase"] != "pause"   # pause ended -> back to cycle
-    assert render.pomodoro_state(datetime(2026, 8, 2, 18, 30, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "19:00"}
+    # 2026-08-03 is a Monday (workday window 9-21)
+    assert render.pomodoro_state(datetime(2026, 8, 3, 8, 30, tzinfo=tz)) == {"active": False}   # before lookahead window
+    assert render.pomodoro_state(datetime(2026, 8, 3, 8, 55, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}   # 8:55 pre-render lookahead -> 9:00 state
+    assert render.pomodoro_state(datetime(2026, 8, 3, 8, 59, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}   # still lookahead
+    assert render.pomodoro_state(datetime(2026, 8, 3, 21, 0, tzinfo=tz)) == {"active": False}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 9, 0, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 9, 10, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 15}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 9, 25, tzinfo=tz)) == {"active": True, "phase": "break", "remaining": 5}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 9, 30, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 12, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "13:30"}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 13, 30, tzinfo=tz))["phase"] != "pause"   # pause ended -> back to cycle
+    assert render.pomodoro_state(datetime(2026, 8, 3, 18, 30, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "19:00"}
+
+
+def test_pomodoro_inactive_on_rest_days():
+    """Weekends and holidays are rest days — no pomodoro state at all."""
+    tz = ZoneInfo("Asia/Shanghai")
+    assert render.pomodoro_state(datetime(2026, 8, 2, 9, 0, tzinfo=tz)) == {"active": False}   # Sunday
+    assert render.pomodoro_state(datetime(2026, 8, 8, 9, 0, tzinfo=tz)) == {"active": False}   # Saturday
+    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": False}  # lunch time on rest day
 
 
 def test_pomodoro_friday_ends_early():
-    """Friday uses pomodoro_end_friday (18) — window closes at 18:00 instead of 21:00."""
+    """Friday uses the friday day-type window (9-18) — closes at 18:00 instead of 21:00."""
     tz = ZoneInfo("Asia/Shanghai")
     # 2026-08-07 is a Friday
     # 17:55 — still active (inside Friday window)
@@ -106,27 +142,37 @@ def test_pomodoro_friday_ends_early():
 
 def test_pomodoro_pause_is_a_true_pause(monkeypatch):
     # 非倍数窗口（45min）：验证午餐和晚餐都是 true pause —— 从时钟扣除，而非穿透。
-    # 注意：break_windows 是 Settings() 构造时解析缓存的派生字段，所以直接 patch
-    # 结构化列表（patch 原始 breaks 字符串不会触发重新解析）。
-    from config import Break
-    monkeypatch.setattr(render.settings, "break_windows", [
+    from daytypes import Break
+    monkeypatch.setattr(render.calendar, "breaks", [
         Break(720, 765, "午休", "12:45"),    # 12:00–12:45
         Break(1080, 1125, "晚餐", "18:45"),  # 18:00–18:45
     ])
     tz = ZoneInfo("Asia/Shanghai")
-    # 12:00 命中午休
-    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "12:45"}
-    # 12:45 午休结束 → work remaining 25（45min 已扣除；若穿透会是 work 10）
-    assert render.pomodoro_state(datetime(2026, 8, 2, 12, 45, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
-    # 18:00 命中晚餐
-    assert render.pomodoro_state(datetime(2026, 8, 2, 18, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "18:45"}
-    # 19:00 晚餐后 → work remaining 25（午+晚共 90min 都已扣除；若不扣晚餐会是 work 10）
-    assert render.pomodoro_state(datetime(2026, 8, 2, 19, 0, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 12, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "午休", "end_hm": "12:45"}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 12, 45, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 18, 0, tzinfo=tz)) == {"active": True, "phase": "pause", "label": "晚餐", "end_hm": "18:45"}
+    assert render.pomodoro_state(datetime(2026, 8, 3, 19, 0, tzinfo=tz)) == {"active": True, "phase": "work", "remaining": 25}
 
 
 def test_lunar_str():
     tz = ZoneInfo("Asia/Shanghai")
     assert render._lunar_str(datetime(2026, 8, 2, 9, 41, tzinfo=tz)) == "六月二十"
+
+
+def test_render_rest_html_shows_day_name_and_rest_label():
+    ctx = {"weekday": "星期四", "date_str": "2026.10.01", "lunar": "八月廿一",
+           "day_name": "国庆节", "image": None}
+    html = render.render_rest_html(ctx)
+    assert "国庆节" in html and "休 息 日" in html and "星期四" in html
+    assert "<img" not in html          # 无图时纯文字版
+
+
+def test_render_rest_to_png_writes_png(tmp_path, monkeypatch):
+    monkeypatch.setattr(render, "_html_to_png", lambda html, out: (Path(out).write_bytes(b"fake")))
+    out = tmp_path / "rest.png"
+    render.render_rest_to_png({"weekday": "四", "date_str": "2026.10.01", "lunar": "x",
+                               "day_name": "国庆节", "image": None}, str(out))
+    assert out.read_bytes() == b"fake"
 
 
 def test_weather_cache(monkeypatch):
@@ -285,3 +331,31 @@ def test_template_shows_prio_markers():
     assert '<span class="pmark high">●</span>' in html
     assert '<span class="pmark normal">●</span>' in html
     assert '<span class="pmark low">○</span>' in html
+
+
+def test_fetch_rest_image_returns_grayscale_data_uri(monkeypatch):
+    # 生成一张彩色小图，模拟远端响应
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), (200, 30, 30)).save(buf, format="PNG")
+    monkeypatch.setattr(render.httpx, "get",
+                        lambda url, **k: type("R", (), {"content": buf.getvalue(),
+                                                       "raise_for_status": lambda self: None})())
+    uri = render._fetch_rest_image("https://x.png")
+    assert uri.startswith("data:image/png;base64,")
+
+
+def test_fetch_rest_image_failure_degrades_to_none(monkeypatch):
+    monkeypatch.setattr(render.httpx, "get",
+                        lambda url, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    assert render._fetch_rest_image("https://x.png") is None
+
+
+def test_build_rest_context_uses_image_when_configured(monkeypatch):
+    from daytypes import DayType
+    monkeypatch.setattr(render, "_fetch_rest_image", lambda url: f"data:{url}")
+    dt = DayType(type_name="rest", name="国庆节", simple=True, render_at=540,
+                 image="https://img.example/oct1.png")
+    ctx = render.build_rest_context(datetime(2026, 10, 1, 9, 0), dt)
+    assert ctx["image"] == "data:https://img.example/oct1.png"
+    assert ctx["day_name"] == "国庆节"

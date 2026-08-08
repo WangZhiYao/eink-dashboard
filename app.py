@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from apscheduler.schedulers.background import BackgroundScheduler
 from config import settings
-from render import render_now
+from daytypes import calendar
+from render import render_now, render_tick
 from todos import db as todos_db
 from todos.api import router as todos_router
 from todos.auth import verify_admin
@@ -46,54 +47,25 @@ OUT = "static/dashboard.png"
 _scheduler = None
 
 
-def _render_schedule(s):
-    """Cron (job_id, hour, minute, day_of_week) for each render job, derived from settings.
-
-    Pure function so the daily schedule is unit-testable without booting a live
-    scheduler / DB / Chromium. Consumed by _start_scheduler() below.
-
-    Friday uses pomodoro_end_friday; Mon-Thu use pomodoro_end. When they match,
-    a single set of jobs covers all workdays.
-    """
-    fri_end = s.pomodoro_end_friday
-    jobs = []
-
-    if s.pomodoro_end == fri_end:
-        # Same end time for all workdays — single set of jobs
-        jobs.append(("render_day", f"{s.pomodoro_start}-{s.pomodoro_end - 1}", f"*/{s.render_interval_min}", "mon-fri"))
-        jobs.append(("render_final", str(s.pomodoro_end), "0", "mon-fri"))
-    else:
-        # Mon-Thu: use pomodoro_end (e.g. 21:00)
-        jobs.append(("render_day_mon_thu", f"{s.pomodoro_start}-{s.pomodoro_end - 1}", f"*/{s.render_interval_min}", "mon-thu"))
-        jobs.append(("render_final_mon_thu", str(s.pomodoro_end), "0", "mon-thu"))
-        # Friday: use pomodoro_end_friday (e.g. 18:00)
-        jobs.append(("render_day_fri", f"{s.pomodoro_start}-{fri_end - 1}", f"*/{s.render_interval_min}", "fri"))
-        jobs.append(("render_final_fri", str(fri_end), "0", "fri"))
-
-    # pre-render just before the day starts (e.g. 8:55) — Mon-Fri
-    jobs.append(("render_prerender", str(s.pomodoro_start - 1), str(60 - s.render_interval_min), "mon-fri"))
-
-    return jobs
-
-
 def _start_scheduler():
     global _scheduler
     log.info(
-        "eink-dashboard starting | tz=%s render_interval=%dm pomodoro=%d-%d(mon-thu)/%d(fri) breaks=%s todo_db=%s log_level=%s",
-        settings.tz, settings.render_interval_min, settings.pomodoro_start,
-        settings.pomodoro_end, settings.pomodoro_end_friday, settings.breaks,
+        "eink-dashboard starting | tz=%s calendar=%s interval=%dm breaks=%s todo_db=%s log_level=%s",
+        settings.tz, settings.calendar_file, calendar.render_interval_min,
+        [(b.label, b.end_hm) for b in calendar.breaks],
         settings.todo_db, settings.log_level,
     )
     todos_db.init_db(settings.todo_db)
     _scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.tz))
-    for job_id, hour, minute, day_of_week in _render_schedule(settings):
-        _scheduler.add_job(render_now, "cron", hour=hour, minute=minute, day_of_week=day_of_week, id=job_id)
+    _scheduler.add_job(render_tick, "cron", hour="*",
+                       minute=f"*/{calendar.render_interval_min}", id="render_tick")
     _scheduler.start()
-    # render once immediately so the first serve isn't empty
+    # render once immediately so the first serve isn't empty; failure is logged
+    # by render_now itself and the cron job will retry
     try:
         render_now()
     except Exception:
-        pass
+        log.warning("initial render failed; scheduler will retry")
 
 
 @asynccontextmanager

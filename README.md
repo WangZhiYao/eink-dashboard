@@ -9,6 +9,7 @@
 - **室内环境** — SenseCraft 设备上的 SHT40 温湿度 + 电量
 - **番茄钟** — 时钟锚定的 25/5 循环,工作窗口可配置;午休/晚餐等休息时段是**真正暂停**(从时钟中扣除,结束后循环继续);窗口结束前 5 分钟预渲染,设备拉取即有最新画面
 - **待办** — 手机浏览器管理(`/todos`,Basic 认证),支持优先级与完成状态;墨水屏展示未完成的前 6 条,紧要/普通/从容用 **实心黑圆 ● / 实心灰圆 ● / 空心圆 ○** 区分
+- **节假日/调休** — 日历文件驱动(通用):节假日显示节日名、调休补班的周末照常渲染、大小周可表达;任何国家的开发者替换日历文件即可接入自己的节假日
 
 所有数据都"烤"进一张图里,设备端只需一个 Image 小部件,无需任何 JSON 绑定。
 
@@ -46,6 +47,7 @@ python -m playwright install chromium   # 本地截图需要 Chromium
 
 # 2. 配置环境变量
 Copy-Item .env.example .env   # 填真实值,见下方配置表
+Copy-Item calendar.example.json calendar.json   # 日历文件(节假日/窗口/休息时段),见下方「日历文件」
 
 # 3. 启动
 uvicorn app:app --reload
@@ -59,7 +61,7 @@ uvicorn app:app --reload
 
 ## 配置
 
-复制 `.env.example` 为 `.env` 后填写。**注意:`.env` 必须保存为 UTF-8 编码**(`BREAKS` 含中文标签,非 UTF-8 会导致启动时 `UnicodeDecodeError`):
+复制 `.env.example` 为 `.env` 后填写;再复制 `calendar.example.json` 为 `calendar.json`(见下方「日历文件」)。**注意:`.env` 与 `calendar.json` 必须保存为 UTF-8 编码**(日历含中文标签,非 UTF-8 会导致启动时 `UnicodeDecodeError`):
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -68,16 +70,34 @@ uvicorn app:app --reload
 | `QWEATHER_HOST` | — | QWeather API 主机,如 `https://h.qweatherapi.com` |
 | `QWEATHER_API_KEY` | — | QWeather API Key |
 | `QWEATHER_LOCATION` | `120.16,30.29` | 天气位置(经纬度,逗号分隔) |
-| `RENDER_INTERVAL_MIN` | `5` | 白天刷新间隔(分钟),SenseCraft 小部件需匹配 |
-| `WEATHER_CACHE_MIN` | `30` | QWeather 响应缓存分钟数 |
-| `POMODORO_START` | `9` | 番茄钟 / 快速刷新窗口开始小时 |
-| `POMODORO_END` | `21` | 番茄钟 / 快速刷新窗口结束小时(不含) |
-| `BREAKS` | `12:00-13:30=午休,18:00-19:00=晚餐` | 休息暂停时段,格式 `HH:MM-HH:MM=标签`,逗号分隔多条 |
+| `CALENDAR_FILE` | — | **必填**。日历 JSON 路径(节假日/窗口/休息时段/刷新间隔的唯一真相),详见下节 |
 | `ADMIN_USERNAME` | `admin` | `/todos` 与 `/api/todos` 的 Basic 认证用户名 |
 | `ADMIN_PASSWORD` | `changeme` | **部署前必须改成强密码** |
 | `TZ` | `Asia/Shanghai` | 时区 |
 | `TODO_DB` | `todos.db` | SQLite 待办库路径(Docker 中为 `/app/data/todos.db`) |
 | `LOG_LEVEL` | `INFO` | 根日志级别 |
+
+## 日历文件
+
+`CALENDAR_FILE` 指向一个 JSON 日历文件——**所有时间/调度行为的唯一真相**。复制
+`calendar.example.json`(含 2026 年中国节假日+调休)后修改即可;任何国家的开发者替换
+`overrides` 就能接入自己的节假日,无需改代码。
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `render_interval_min` | `5` | 全天渲染触发间隔(分钟) |
+| `weather_cache_min` | `30` | 天气缓存分钟数 |
+| `breaks` | `[]` | 休息暂停时段,`{"start": "HH:MM", "end": "HH:MM", "label": "午休"}`,适用于所有工作日 |
+| `weekends` | `[5, 6]` | 休息日星期(0=周一 … 6=周日,默认周六日);中东可改 `[4, 5]` |
+| `types.workday` | `{start: 9, end: 21}` | 普通工作日渲染/番茄钟窗口 |
+| `types.friday` | 同 workday | 周五窗口(不写则周五等同工作日) |
+| `types.rest` | `{simple: true, render_at: "9:00"}` | 休息日:每天 `render_at` 渲染一次简化画面(日期+节日名+「休息日」);`image` 可配图片 URL(灰度嵌入,失败自动降级纯文字) |
+| `overrides` | `{}` | 例外日:日期 → `{"type": "rest"/"workday"/..., "name": "国庆节", "image"?}`。节假日、调休补班、大小周的周六都写在这里;`type` 需在 `types` 中定义 |
+
+- **判定优先级**:`overrides` > `weekends` > 周五 > 工作日
+- **大小周**:把上班的周六逐条写成 `{"type": "workday", "name": "大周"}`
+- **休息日图片**:`types.rest.image` 设默认图,`overrides.<日期>.image` 设节日专属图(如国庆图)
+- 校验失败(格式/时间/重叠/未知类型)启动即报错,便于早发现
 
 ## 部署
 
@@ -89,9 +109,10 @@ uvicorn app:app --reload
 
 ```sh
 cp .env.example .env
+cp calendar.example.json calendar.json   # 按当年官方安排更新节假日
 # 填真实值:SENSECRAFT_DEVICE_ID / SENSECRAFT_API_KEY / QWEATHER_HOST / QWEATHER_API_KEY
 # 以及 ADMIN_USERNAME / ADMIN_PASSWORD —— 改成强值!
-# BREAKS(用餐/休息暂停时段)默认即可;要改格式:HH:MM-HH:MM=标签,逗号分隔多条
+# 休息暂停时段 / 渲染窗口 / 节假日都在 calendar.json 里配置,见上方「日历文件」
 ```
 
 > `ADMIN_USERNAME` / `ADMIN_PASSWORD` 必须改成强值。`/todos` 和 `/api/todos` 在公网,靠它俩把锁。
@@ -173,7 +194,8 @@ nginx -t && nginx -s reload
 
 ```
 ├── app.py               # FastAPI 入口:调度器、路由、日志配置
-├── config.py            # 环境变量配置(含 BREAKS 解析校验)
+├── config.py            # 环境变量/基础配置
+├── daytypes.py          # 日历系统:weekends/overrides/types/breaks 判定与校验
 ├── render.py            # 数据组装、Jinja2 渲染、Playwright 截图、番茄钟状态机
 ├── fetchers/
 │   ├── sht40.py         # SenseCraft SHT40 温湿度抓取
@@ -185,7 +207,7 @@ nginx -t && nginx -s reload
 ├── templates/
 │   ├── dashboard.html   # 墨水屏页面(800×480)
 │   └── todos.html       # 待办管理页(手机端)
-├── tests/               # pytest 测试(47 个)
+├── tests/               # pytest 测试(75 个)
 └── static/              # dashboard.png 输出目录
 ```
 
