@@ -157,6 +157,13 @@ def test_lunar_str():
     assert render._lunar_str(datetime(2026, 8, 2, 9, 41, tzinfo=tz)) == "六月二十"
 
 
+def test_template_focus_card_header_is_neutral():
+    # 标题固定为中性词「状态」——休息日/工作日通用，不随类型变化
+    html = render.render_html(_pomodoro_ctx({"active": True, "phase": "work", "remaining": 20}))
+    assert '<div class="hd">状态</div>' in html
+    assert '<div class="hd">专注</div>' not in html
+
+
 def test_template_focus_card_shows_rest_day():
     # 休息日渲染完整主画面，专注卡片显示休息状态（含节日名）
     ctx = _pomodoro_ctx({"active": False})
