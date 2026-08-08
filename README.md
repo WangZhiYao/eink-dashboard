@@ -91,7 +91,7 @@ uvicorn app:app --reload
 | `weekends` | `[5, 6]` | 休息日星期(0=周一 … 6=周日,默认周六日);中东可改 `[4, 5]` |
 | `types.workday` | `{start: 9, end: 21}` | 普通工作日渲染/番茄钟窗口 |
 | `types.friday` | 同 workday | 周五窗口(不写则周五等同工作日) |
-| `types.rest` | `{simple: true, render_at: "9:00"}` | 休息日:从 `render_at` 起每 `render_interval_min` 渲染**完整主画面**(时钟/天气/待办照常刷新)——只把「专注」卡片换成休息状态(显示节日名) |
+| `types.rest` | `{simple: true, render_at: "9:00"}` | 休息日:从 `render_at` 起每 `render_interval_min` 渲染**完整主画面**(时钟/天气/待办照常刷新)——只把「状态」卡片换成休息内容(显示节日名) |
 | `overrides` | `{}` | 例外日:日期 → `{"type": "rest"/"workday"/..., "name": "国庆节"}`。节假日、调休补班、大小周的周六都写在这里;`type` 需在 `types` 中定义 |
 
 - **判定优先级**:`overrides` > `weekends` > 周五 > 工作日

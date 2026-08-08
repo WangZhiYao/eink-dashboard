@@ -28,7 +28,7 @@ class DayType:
     name: str | None = None
     start: int | None = None     # 窗口起点（当日分钟数）；rest 日为 None
     end: int | None = None       # 窗口终点（不含）
-    simple: bool = False         # 休息日（渲染完整画面，专注卡片显示休息）
+    simple: bool = False         # 休息日（渲染完整画面，状态卡片显示休息）
     render_at: int | None = None # rest 日首次渲染时刻（分钟数）
 
 
