@@ -6,3 +6,4 @@ playwright==1.62.0   # pin to match Docker base image mcr.microsoft.com/playwrig
 apscheduler>=3.10
 pydantic-settings>=2.2
 lunardate>=0.2
+pillow>=12.3.0
