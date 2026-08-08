@@ -1,6 +1,5 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import io
 import render
 from fetchers.sht40 import Sht40Data
 from fetchers.weather import WeatherData
@@ -56,7 +55,6 @@ import asyncio
 import threading
 import time
 import pytest
-from pathlib import Path
 from PIL import Image
 
 def test_render_to_png_produces_800x480(tmp_path, monkeypatch):
@@ -159,20 +157,19 @@ def test_lunar_str():
     assert render._lunar_str(datetime(2026, 8, 2, 9, 41, tzinfo=tz)) == "六月二十"
 
 
-def test_render_rest_html_shows_day_name_and_rest_label():
-    ctx = {"weekday": "星期四", "date_str": "2026.10.01", "lunar": "八月廿一",
-           "day_name": "国庆节", "image": None}
-    html = render.render_rest_html(ctx)
-    assert "国庆节" in html and "休 息 日" in html and "星期四" in html
-    assert "<img" not in html          # 无图时纯文字版
-
-
-def test_render_rest_to_png_writes_png(tmp_path, monkeypatch):
-    monkeypatch.setattr(render, "_html_to_png", lambda html, out: (Path(out).write_bytes(b"fake")))
-    out = tmp_path / "rest.png"
-    render.render_rest_to_png({"weekday": "四", "date_str": "2026.10.01", "lunar": "x",
-                               "day_name": "国庆节", "image": None}, str(out))
-    assert out.read_bytes() == b"fake"
+def test_template_focus_card_shows_rest_day():
+    # 休息日渲染完整主画面，专注卡片显示休息状态（含节日名）
+    ctx = _pomodoro_ctx({"active": False})
+    ctx["day_type"] = "rest"
+    ctx["day_name"] = "国庆节"
+    html = render.render_html(ctx)
+    assert "休息日 · 国庆节" in html
+    assert "今日已结束" not in html
+    # 工作日不显示休息日
+    ctx2 = _pomodoro_ctx({"active": False})
+    ctx2["day_type"] = "workday"
+    ctx2["day_name"] = ""
+    assert "休息日" not in render.render_html(ctx2)
 
 
 def test_weather_cache(monkeypatch):
@@ -333,29 +330,3 @@ def test_template_shows_prio_markers():
     assert '<span class="pmark low">○</span>' in html
 
 
-def test_fetch_rest_image_returns_grayscale_data_uri(monkeypatch):
-    # 生成一张彩色小图，模拟远端响应
-    from PIL import Image
-    buf = io.BytesIO()
-    Image.new("RGB", (10, 10), (200, 30, 30)).save(buf, format="PNG")
-    monkeypatch.setattr(render.httpx, "get",
-                        lambda url, **k: type("R", (), {"content": buf.getvalue(),
-                                                       "raise_for_status": lambda self: None})())
-    uri = render._fetch_rest_image("https://x.png")
-    assert uri.startswith("data:image/png;base64,")
-
-
-def test_fetch_rest_image_failure_degrades_to_none(monkeypatch):
-    monkeypatch.setattr(render.httpx, "get",
-                        lambda url, **k: (_ for _ in ()).throw(RuntimeError("down")))
-    assert render._fetch_rest_image("https://x.png") is None
-
-
-def test_build_rest_context_uses_image_when_configured(monkeypatch):
-    from daytypes import DayType
-    monkeypatch.setattr(render, "_fetch_rest_image", lambda url: f"data:{url}")
-    dt = DayType(type_name="rest", name="国庆节", simple=True, render_at=540,
-                 image="https://img.example/oct1.png")
-    ctx = render.build_rest_context(datetime(2026, 10, 1, 9, 0), dt)
-    assert ctx["image"] == "data:https://img.example/oct1.png"
-    assert ctx["day_name"] == "国庆节"

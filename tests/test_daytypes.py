@@ -17,7 +17,7 @@ def test_defaults_when_types_missing():
     assert c.breaks == []
     dt = c.day_type(date(2026, 8, 3))      # Monday
     assert (dt.type_name, dt.start, dt.end) == ("workday", 540, 1260)
-    assert dt.simple is False and dt.image is None
+    assert dt.simple is False
     dt_sat = c.day_type(date(2026, 8, 8))  # Saturday
     assert dt_sat.simple is True and dt_sat.render_at == 540
 
@@ -45,13 +45,6 @@ def test_override_rest_holiday():
     c = _cal(overrides={"2026-10-01": {"type": "rest", "name": "国庆节"}})
     dt = c.day_type(date(2026, 10, 1))    # Thursday
     assert dt.simple is True and dt.name == "国庆节"
-
-
-def test_override_image_overrides_type_image():
-    c = _cal(types={"rest": {"simple": True, "image": "https://default.png"}},
-             overrides={"2026-10-01": {"type": "rest", "name": "国庆节", "image": "https://oct1.png"}})
-    assert c.day_type(date(2026, 10, 1)).image == "https://oct1.png"
-    assert c.day_type(date(2026, 8, 8)).image == "https://default.png"
 
 
 def test_custom_weekends():

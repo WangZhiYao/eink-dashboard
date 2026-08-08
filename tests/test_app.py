@@ -8,7 +8,6 @@ import render
 def test_render_tick_renders_inside_workday_window(monkeypatch):
     calls = []
     monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
-    render._rest_rendered.clear()
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 8, 3, 9, 0, tzinfo=tz))    # Monday 9:00
     assert calls == ["full"]
@@ -23,7 +22,6 @@ def test_render_tick_renders_inside_workday_window(monkeypatch):
 def test_render_tick_prerender_before_window(monkeypatch):
     calls = []
     monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
-    render._rest_rendered.clear()
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 8, 3, 8, 55, tzinfo=tz))    # lookahead
     assert calls == ["full"]
@@ -32,35 +30,31 @@ def test_render_tick_prerender_before_window(monkeypatch):
     assert calls == []
 
 
-def test_render_tick_rest_day_renders_once_at_render_at(monkeypatch):
+def test_render_tick_rest_day_renders_every_tick_after_render_at(monkeypatch):
+    # 休息日从 render_at 起每 5 分钟照常渲染（时钟/天气/待办实时刷新），同工作日布局；
+    # render_at 之前不渲染
     calls = []
-    monkeypatch.setattr(render, "render_rest_to_png",
-                        lambda ctx, **k: calls.append(ctx["day_name"]))
-    render._rest_rendered.clear()
+    monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 8, 2, 8, 55, tzinfo=tz))    # Sunday before 9:00
     assert calls == []
-    render.render_tick(datetime(2026, 8, 2, 9, 0, tzinfo=tz))     # first at render_at
-    assert calls == [""]
-    calls.clear()
-    render.render_tick(datetime(2026, 8, 2, 12, 0, tzinfo=tz))    # already rendered today
-    assert calls == []
-    render._rest_rendered.clear()
-    render.render_tick(datetime(2026, 8, 9, 9, 0, tzinfo=tz))     # next Saturday renders again
-    assert calls == [""]
+    render.render_tick(datetime(2026, 8, 2, 9, 0, tzinfo=tz))     # 9:00 (render_at)
+    render.render_tick(datetime(2026, 8, 2, 9, 5, tzinfo=tz))     # 9:05 — every tick re-renders
+    render.render_tick(datetime(2026, 8, 2, 12, 0, tzinfo=tz))    # 12:00 — same day, still renders
+    assert calls == ["full", "full", "full"]
 
 
-def test_render_tick_holiday_override_renders_rest(monkeypatch):
-    # override 使工作日变成 rest 日 → render_tick 出简化画面且带节日名
+def test_render_tick_holiday_override_renders_full_screen(monkeypatch):
+    # override 使工作日变成 rest 日 → render_tick 渲染完整主画面（非独立休息画面），
+    # 且同休息日一样每 5 分钟持续渲染
     monkeypatch.setattr(render.calendar, "_overrides",
-                        {date(2026, 10, 1): ("rest", "国庆节", None)})
+                        {date(2026, 10, 1): ("rest", "国庆节")})
     calls = []
-    monkeypatch.setattr(render, "render_rest_to_png",
-                        lambda ctx, **k: calls.append(ctx["day_name"]))
-    render._rest_rendered.clear()
+    monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 10, 1, 9, 0, tzinfo=tz))
-    assert calls == ["国庆节"]
+    render.render_tick(datetime(2026, 10, 1, 9, 5, tzinfo=tz))
+    assert calls == ["full", "full"]
 
 
 def test_dashboard_png_served_with_cache_header(tmp_path, monkeypatch):

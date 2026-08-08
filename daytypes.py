@@ -28,9 +28,8 @@ class DayType:
     name: str | None = None
     start: int | None = None     # 窗口起点（当日分钟数）；rest 日为 None
     end: int | None = None       # 窗口终点（不含）
-    simple: bool = False         # 渲染简化休息画面
+    simple: bool = False         # 休息日（渲染完整画面，专注卡片显示休息）
     render_at: int | None = None # rest 日首次渲染时刻（分钟数）
-    image: str | None = None     # 休息画面图片 URL
 
 
 def _hhmm_to_min(s: str, idx: int) -> int:
@@ -78,9 +77,9 @@ class Calendar:
         self._types = {k: self._parse_type(k, v) for k, v in types.items()}
         # 内置默认（types 显式配置时覆盖之）
         self._types.setdefault("workday", {"start": 540, "end": 1260,
-                                           "simple": False, "render_at": None, "image": None})
+                                           "simple": False, "render_at": None})
         self._types.setdefault("rest", {"start": None, "end": None,
-                                        "simple": True, "render_at": 540, "image": None})
+                                        "simple": True, "render_at": 540})
         overrides = data.get("overrides") or {}
         if not isinstance(overrides, dict):
             raise ValueError("overrides 必须是对象")
@@ -91,12 +90,10 @@ class Calendar:
                 raise ValueError(f"override {ds} 需要对象且含 type 字符串: {val!r}")
             if val["type"] not in self._types:
                 raise ValueError(f"override {ds} 引用了不存在的类型: {val['type']!r}")
-            name, image = val.get("name"), val.get("image")
+            name = val.get("name")
             if name is not None and not isinstance(name, str):
                 raise ValueError(f"override {ds} 的 name 必须是字符串")
-            if image is not None and not isinstance(image, str):
-                raise ValueError(f"override {ds} 的 image 必须是字符串")
-            self._overrides[d] = (val["type"], name, image)
+            self._overrides[d] = (val["type"], name)
 
     @classmethod
     def load(cls, path: str) -> "Calendar":
@@ -126,7 +123,7 @@ class Calendar:
     def _parse_type(name, v) -> dict:
         if not isinstance(v, dict):
             raise ValueError(f"types.{name} 必须是对象")
-        cfg = {"start": None, "end": None, "simple": False, "render_at": None, "image": None}
+        cfg = {"start": None, "end": None, "simple": False, "render_at": None}
         if "start" in v or "end" in v:
             if not isinstance(v.get("start"), int) or not isinstance(v.get("end"), int):
                 raise ValueError(f"types.{name} 需要整数 start/end 小时")
@@ -142,32 +139,27 @@ class Calendar:
             if not isinstance(v["render_at"], str):
                 raise ValueError(f"types.{name}.render_at 必须是 HH:MM 字符串")
             cfg["render_at"] = _hhmm_to_min(v["render_at"], 0)
-        if "image" in v:
-            if not isinstance(v["image"], str):
-                raise ValueError(f"types.{name}.image 必须是字符串")
-            cfg["image"] = v["image"]
         return cfg
 
     def day_type(self, d: date) -> DayType:
         ov = self._overrides.get(d)
         if ov is not None:
-            t, name, image = ov
+            t, name = ov
             cfg = self._types[t]
             return DayType(type_name=t, name=name, start=cfg["start"], end=cfg["end"],
-                           simple=cfg["simple"], render_at=cfg["render_at"],
-                           image=image or cfg["image"])
+                           simple=cfg["simple"], render_at=cfg["render_at"])
         # weekends 优先于 friday：用户把周五配进 weekends（如中东）时周五按休息日
         if d.weekday() in self._weekends:
             cfg = self._types["rest"]
             return DayType(type_name="rest", start=None, end=None, simple=True,
-                           render_at=cfg["render_at"], image=cfg["image"])
+                           render_at=cfg["render_at"])
         if d.weekday() == 4:                       # Friday
             cfg = self._types["friday"] if "friday" in self._types else self._types["workday"]
             return DayType(type_name="friday", start=cfg["start"], end=cfg["end"],
-                           simple=cfg["simple"], render_at=cfg["render_at"], image=cfg["image"])
+                           simple=cfg["simple"], render_at=cfg["render_at"])
         cfg = self._types["workday"]
         return DayType(type_name="workday", start=cfg["start"], end=cfg["end"],
-                       simple=cfg["simple"], render_at=cfg["render_at"], image=cfg["image"])
+                       simple=cfg["simple"], render_at=cfg["render_at"])
 
 
 from config import settings

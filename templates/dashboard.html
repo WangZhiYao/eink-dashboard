@@ -2,7 +2,8 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&display=swap">
+<!-- No external fonts: rendering must work offline (e-ink device / GFW), and
+     Playwright waits for font loading which can hang renders for 30s+. -->
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body { width:800px; height:480px; }
@@ -13,7 +14,7 @@
     display:flex; flex-direction:column; gap:14px; padding:14px;
   }
   .gray { color:#5f5f5f; }
-  .num { font-family:"Montserrat",sans-serif; font-variant-numeric:tabular-nums; }
+  .num { font-variant-numeric:tabular-nums; }
   .card { background:#ffffff; border:none; border-radius:7px; overflow:hidden; }
   .card .hd { background:#000000; color:#fff; padding:9px 14px; font-size:16px; font-weight:700; letter-spacing:1px; }
   .card .bd { padding:8px 14px; }
@@ -85,7 +86,9 @@
       <div class="card pomo">
         <div class="hd">专注</div>
         <div class="bd pomo-bd">
-          {% if pomodoro.active %}
+          {% if day_type == "rest" %}
+          <div class="pomo-line">休息日{% if day_name %} · {{ day_name }}{% endif %}</div>
+          {% elif pomodoro.active %}
             {% if pomodoro.phase == "work" %}
             <div class="pomo-line">工作中 · <span class="num">剩 {{ pomodoro.remaining }} 分</span></div>
             {% elif pomodoro.phase == "break" %}

@@ -1,15 +1,11 @@
 import asyncio
-import base64
-import io
 import logging
 import os
 import threading
 import time
 import lunardate
-import httpx
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageOps
 
 from config import settings
 from daytypes import calendar  # 模块级单例（Calendar.load(settings.calendar_file)）
@@ -246,44 +242,7 @@ def render_to_png(context: dict, out_path: str = OUT_PATH) -> None:
     _html_to_png(render_html(context), out_path)
 
 
-def render_rest_html(context: dict) -> str:
-    return _env.get_template("rest.html").render(**context)
-
-
-def _fetch_rest_image(url: str) -> str | None:
-    """Fetch a rest-day image, convert to e-ink grayscale, return base64 data
-    URI. Any failure (network / decode / format) degrades to None so the
-    screen still renders text-only — one broken image must not blank a day."""
-    try:
-        resp = httpx.get(url, timeout=10.0, follow_redirects=True)
-        resp.raise_for_status()
-        im = Image.open(io.BytesIO(resp.content)).convert("L")
-        im.thumbnail((744, 300))
-        im = ImageOps.autocontrast(im)
-        buf = io.BytesIO()
-        im.save(buf, format="PNG")
-        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-    except Exception:
-        log.warning("rest image fetch failed; rendering text-only", exc_info=True)
-        return None
-
-
-def build_rest_context(now: datetime, dt) -> dict:
-    return {
-        "weekday": WEEKDAYS[now.weekday()],
-        "date_str": now.strftime("%Y.%m.%d"),
-        "lunar": _lunar_str(now),
-        "day_name": dt.name or "",
-        "image": _fetch_rest_image(dt.image) if dt.image else None,
-    }
-
-
-def render_rest_to_png(context: dict, out_path: str = OUT_PATH) -> None:
-    _html_to_png(render_rest_html(context), out_path)
-
-
 _render_lock = threading.Lock()
-_rest_rendered: set = set()
 
 
 def render_now() -> None:
@@ -301,25 +260,19 @@ def render_now() -> None:
 def render_tick(now: datetime | None = None) -> None:
     """Scheduler entry: decide per day-type whether/how to render.
 
-    workday/friday: full render inside [start, end) (plus the pre-render
-    lookahead window); rest: render the simplified screen once, at/after
-    render_at, remembered per date in-process. If a rest render fails the
-    date stays marked — the previous frame stays on screen and it is
-    retried on the next rest day.
+    workday/friday/small: full render inside [start, end) (plus the pre-render
+    lookahead window); rest: full render on every tick from render_at on — the
+    layout is the same as a workday, only the focus card shows the rest state,
+    so the clock/weather/todos stay live. A failed render is retried by the
+    next tick.
     """
     now = now or datetime.now(ZoneInfo(settings.tz))
     now_min = now.hour * 60 + now.minute
     dt = calendar.day_type(now.date())
     if dt.simple:
-        if now.date() in _rest_rendered or dt.render_at is None or now_min < dt.render_at:
+        if dt.render_at is None or now_min < dt.render_at:
             return
-        _rest_rendered.add(now.date())
-        with _render_lock:
-            try:
-                render_rest_to_png(build_rest_context(now, dt))
-                log.info("rendered rest screen for %s", now.date())
-            except Exception:
-                log.exception("rest render failed")
+        render_now()
         return
     if dt.start - calendar.render_interval_min <= now_min < dt.start \
             or dt.start <= now_min < dt.end:
