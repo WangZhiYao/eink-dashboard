@@ -2,6 +2,7 @@ import logging
 import logging.config
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -95,8 +96,20 @@ def health():
 def dashboard():
     if not os.path.exists(OUT):
         raise HTTPException(status_code=503, detail="not ready")
+
+    # Re-render on demand when the cached image is older than the staleness
+    # threshold, so the device always gets a fresh image regardless of when
+    # the last cron tick fired. The cron pre-renders every render_interval_min
+    # as a safety net; this on-demand path keeps the display in sync.
+    age = time.time() - os.path.getmtime(OUT)
+    if age > calendar.stale_seconds:
+        try:
+            render_now()
+        except Exception:
+            log.warning("on-demand render failed; serving cached image")
+
     return FileResponse(
         OUT,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=300"},
+        headers={"Cache-Control": "no-cache"},
     )

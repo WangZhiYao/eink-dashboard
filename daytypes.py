@@ -69,6 +69,7 @@ class Calendar:
             raise ValueError("日历数据必须是 JSON 对象")
         self.render_interval_min = self._int(data, "render_interval_min", 5, 1, 59)
         self.weather_cache_min = self._int(data, "weather_cache_min", 30, 1, 24 * 60)
+        self.stale_seconds = self._int(data, "stale_seconds", 120, 30, 600)
         self.breaks = _parse_breaks(data.get("breaks"))
         self._weekends = set(self._weekends_list(data.get("weekends", [5, 6])))
         types = data.get("types") or {}
