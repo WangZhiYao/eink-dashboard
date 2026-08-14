@@ -5,6 +5,6 @@ jinja2>=3.1
 playwright==1.62.0   # pin to match Docker base image mcr.microsoft.com/playwright/python:v1.62.0
 apscheduler>=3.11.3
 pydantic-settings>=2.14.2
-lunardate>=0.2
+lunardate>=0.3.0
 pillow>=12.3.0
 akshare>=1.18.82
