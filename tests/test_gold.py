@@ -187,7 +187,10 @@ class TestFetchTradingDay:
         assert g.current == g.points[-1]["price"]
 
     def test_evening_rolls_to_tomorrow(self):
-        """Thursday 22:00 fetch stamped Friday — tonight+today's day shown."""
+        """Thursday 22:00 fetch stamped Friday — the view rolls to Friday's
+        trading day, which so far is just tonight's night session (its evening
+        slice). Thursday's finished day is NOT spliced in: the display shows
+        one trading day (evening → morning → day), per the module docstring."""
         self._mock_now(_dt.datetime(2026, 8, 13, 22, 0))
         self._mock_ak(
             _pts("00:00", "02:30", 950.0) + _pts("09:00", "15:30", 952.0)
@@ -195,10 +198,9 @@ class TestFetchTradingDay:
             stamp="2026年08月14日 22:00:00",
         )
         g = fetch_gold_intraday("Au99.99")
-        # Order: day session first, tonight's night appended (per stamp → Fri)
         times = [p["time"] for p in g.points]
-        assert times[0] == "09:00:00"
-        assert times[-1] == "22:00:00"
+        assert times[0] == "20:00:00"     # tonight's night opens Friday's day
+        assert times[-1] == "22:00:00"    # and is all Friday has so far
         assert g.current == g.points[-1]["price"]
 
     def test_saturday_morning_stamped_monday(self):
@@ -261,7 +263,8 @@ class TestFetchTradingDay:
         self._mock_ak(None, stamp=None)
         g = fetch_gold_intraday("Au99.99")
         assert g.points[0]["time"] == "09:00:00"
-        assert g.current == pytest.approx(954.0 + 389 * 0.1)
+        # _pts is inclusive: 09:00–15:30 spans 391 points, last = base + 390*step
+        assert g.current == pytest.approx(954.0 + 390 * 0.1)
 
     def test_stats_computed_from_assembled(self):
         self._mock_now(_dt.datetime(2026, 8, 13, 14, 0))
@@ -274,7 +277,8 @@ class TestFetchTradingDay:
         )
         g = fetch_gold_intraday("Au99.99")
         assert g.low == pytest.approx(948.0)
-        assert g.high == pytest.approx(960.0 + 299 * 0.1)
+        # _pts is inclusive: 09:00–14:00 spans 301 points, top = base + 300*step
+        assert g.high == pytest.approx(960.0 + 300 * 0.1)
         assert g.current == g.high
         assert g.open == 960.0
 

@@ -22,7 +22,41 @@ def test_parse_hourly_labels_first_as_now():
 def test_parse_daily():
     d = parse_daily({"daily": [{"tempMax": "29", "tempMin": "21", "sunrise": "05:42", "sunset": "19:08"},
                                {"tempMax": "30", "tempMin": "22"}]})
-    assert d == {"hi": 29, "lo": 21, "tomorrow_hi": 30, "tomorrow_lo": 22, "sunrise": "05:42", "sunset": "19:08"}
+    assert d == {"hi": 29, "lo": 21, "tomorrow_hi": 30, "tomorrow_lo": 22,
+                 "sunrise": "05:42", "sunset": "19:08",
+                 "forecast": [{"week": "今天", "icon": None, "text": "", "hi": 29, "lo": 21},
+                              {"week": "明天", "icon": None, "text": "", "hi": 30, "lo": 22}]}
+
+
+def test_parse_daily_forecast_three_days():
+    """daily_forecast carries up to 3 days: label/icon/text/hi/lo per day."""
+    d = parse_daily({"daily": [
+        {"tempMax": "34", "tempMin": "26", "iconDay": "100", "textDay": "晴",
+         "sunrise": "05:42", "sunset": "19:08"},
+        {"tempMax": "32", "tempMin": "25", "iconDay": "101", "textDay": "多云"},
+        {"tempMax": "29", "tempMin": "24", "iconDay": "104", "textDay": "阴"},
+        {"tempMax": "31", "tempMin": "25", "iconDay": "305", "textDay": "小雨"},
+    ]})
+    fc = d["forecast"]
+    assert len(fc) == 3                      # capped at 3 even when API serves 4
+    assert fc[0] == {"week": "今天", "icon": "100", "text": "晴", "hi": 34, "lo": 26}
+    assert fc[1] == {"week": "明天", "icon": "101", "text": "多云", "hi": 32, "lo": 25}
+    assert fc[2] == {"week": "后天", "icon": "104", "text": "阴", "hi": 29, "lo": 24}
+
+
+def test_parse_daily_forecast_short_payload():
+    """Fewer than 3 days → only what exists (no placeholder rows)."""
+    d = parse_daily({"daily": [{"tempMax": "34", "tempMin": "26",
+                                "iconDay": "100", "textDay": "晴"}]})
+    assert d["forecast"] == [{"week": "今天", "icon": "100", "text": "晴",
+                              "hi": 34, "lo": 26}]
+
+
+def test_parse_daily_forecast_missing_fields_none_safe():
+    """Missing iconDay/textDay parse to None/'' — template renders —."""
+    d = parse_daily({"daily": [{"tempMax": "34", "tempMin": "26"}]})
+    assert d["forecast"] == [{"week": "今天", "icon": None, "text": "",
+                              "hi": 34, "lo": 26}]
 
 def test_parse_air():
     assert parse_air({"now": {"aqi": "45", "category": "优", "pm2p5": "12"}}) == {

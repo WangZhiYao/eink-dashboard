@@ -502,3 +502,47 @@ def test_gold_chart_svg_divider_at_midpoint():
     assert x1 == pytest.approx(83.0, abs=1.0)
 
 
+def _rest_ctx(forecast=None):
+    """Context for a rest day (day_type=rest) — weather card replaces gold."""
+    ctx = _pomodoro_ctx({"active": False})
+    ctx["day_type"] = "rest"
+    ctx["day_name"] = ""
+    ctx["gold"] = None
+    ctx["weather"].daily_forecast = forecast if forecast is not None else [
+        {"week": "今天", "icon": "100", "text": "晴", "hi": 34, "lo": 26},
+        {"week": "明天", "icon": "101", "text": "多云", "hi": 32, "lo": 25},
+        {"week": "后天", "icon": "104", "text": "阴", "hi": 29, "lo": 24},
+    ]
+    return ctx
+
+
+def test_template_rest_day_shows_forecast_card():
+    """Rest day: gold card swapped for the 3-day forecast card."""
+    html = render.render_html(_rest_ctx())
+    assert "天气预报" in html
+    for label in ("今天", "明天", "后天"):
+        assert f">{label}<" in html
+    assert "34°" in html and "26°" in html     # today hi/lo
+    assert "Au99.99" not in html               # gold card hidden
+
+
+def test_template_workday_keeps_gold_card():
+    """Workday (day_type=workday): gold card still renders, no forecast card."""
+    ctx = _pomodoro_ctx({"active": True, "phase": "work", "remaining": 20})
+    ctx["day_type"] = "workday"
+    ctx["day_name"] = ""
+    ctx["gold"] = GoldData(current=760.5, open=755.0, high=762.8, low=753.2,
+                           points=[{"time": "09:00:00", "price": 755.0}])
+    html = render.render_html(ctx)
+    assert "Au99.99" in html
+    assert "天气预报" not in html
+
+
+def test_template_rest_day_empty_forecast_placeholder():
+    """Rest day but forecast unavailable (degraded) → '--' placeholder card."""
+    html = render.render_html(_rest_ctx(forecast=[]))
+    assert "天气预报" in html
+    assert "--" in html
+    assert "Au99.99" not in html
+
+

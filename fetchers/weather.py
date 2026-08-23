@@ -11,6 +11,7 @@ class WeatherData:
     lo: int | None = None
     tomorrow_hi: int | None = None
     tomorrow_lo: int | None = None
+    daily_forecast: list[dict] = field(default_factory=list)   # [{week,icon,text,hi,lo}] ×3
     aqi: int | None = None
     aqi_category: str | None = None
     pm2p5: float | None = None
@@ -45,6 +46,13 @@ def parse_daily(data: dict) -> dict:
     days = data.get("daily") or []
     today = days[0] if days else {}
     tomorrow = days[1] if len(days) > 1 else {}
+    labels = ["今天", "明天", "后天"]
+    forecast = [{"week": labels[i],
+                 "icon": d.get("iconDay"),
+                 "text": d.get("textDay") or "",
+                 "hi": _int(d.get("tempMax")),
+                 "lo": _int(d.get("tempMin"))}
+                for i, d in enumerate(days[:3])]
     return {
         "hi": _int(today.get("tempMax")),
         "lo": _int(today.get("tempMin")),
@@ -52,6 +60,7 @@ def parse_daily(data: dict) -> dict:
         "tomorrow_lo": _int(tomorrow.get("tempMin")),
         "sunrise": today.get("sunrise"),
         "sunset": today.get("sunset"),
+        "forecast": forecast,
     }
 
 
@@ -83,6 +92,7 @@ def fetch_weather(host: str, api_key: str, location: str, client: httpx.Client |
             hourly=parse_hourly(jsons["/v7/weather/24h"]),
             hi=daily["hi"], lo=daily["lo"],
             tomorrow_hi=daily["tomorrow_hi"], tomorrow_lo=daily["tomorrow_lo"],
+            daily_forecast=daily["forecast"],
             aqi=air["aqi"], aqi_category=air["category"], pm2p5=air["pm2p5"],
             rain_chance=rain_chance,
             sunrise=daily["sunrise"], sunset=daily["sunset"],

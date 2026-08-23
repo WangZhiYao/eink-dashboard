@@ -67,7 +67,9 @@ def test_dashboard_png_served_with_cache_header(tmp_path, monkeypatch):
     r = client.get("/dashboard.png")
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
-    assert r.headers["cache-control"] == "public, max-age=300"
+    # no-cache (not max-age): the endpoint re-renders stale images on demand,
+    # so the device must always revalidate instead of serving a cached copy
+    assert r.headers["cache-control"] == "no-cache"
 
 
 def test_health(monkeypatch):

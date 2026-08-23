@@ -13,6 +13,10 @@ services:
     volumes:
       - ./data:/app/data
       - ./calendar.json:/app/calendar.json
+      # gold intraday cache — SGE only serves the in-progress session slice, so
+      # the 20:00→24:00 evening rows exist nowhere but this file; persist it
+      # across container rebuilds or that half of the night session is lost.
+      - ./data/gold_intraday_cache.json:/app/static/gold_intraday_cache.json
     ports:
       # localhost only — the host nginx reverse-proxies public HTTPS to this
       - "127.0.0.1:8000:8000"

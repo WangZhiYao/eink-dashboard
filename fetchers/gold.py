@@ -103,16 +103,22 @@ def _parse_stamp(s: str | None) -> str | None:
 
 
 def _dedup_by_time(points: list[dict]) -> list[dict]:
-    """Drop duplicate 'time' entries, keeping the last occurrence. The SGE
-    endpoint serves the same finished night-session rows on both weekend days,
-    so Sat and Sun calendar slices can contain copies of the same minutes."""
-    seen: set[str] = set()
+    """Drop duplicate 'time' entries, keeping the LAST occurrence's price at
+    the FIRST appearance's position (stable order). The SGE endpoint serves
+    the same finished night-session rows on both weekend days, so Sat and Sun
+    calendar slices can contain copies of the same minutes. Order must stay
+    stable — callers rely on it for chronological plotting and current-price
+    (points are evening→morning→day, NOT clock-sorted, so a plain sorted()
+    would move the evening slice behind the morning tail)."""
+    idx: dict[str, int] = {}
     out: list[dict] = []
-    for p in reversed(points):
-        if p["time"] not in seen:
-            seen.add(p["time"])
+    for p in points:
+        t = p["time"]
+        if t in idx:
+            out[idx[t]] = p          # later value wins, order slot unchanged
+        else:
+            idx[t] = len(out)
             out.append(p)
-    out.reverse()
     return out
 
 
