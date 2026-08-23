@@ -1,5 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import re
+
 import render
 from fetchers.sht40 import Sht40Data
 from fetchers.weather import WeatherData
@@ -447,5 +449,56 @@ def test_gold_chart_svg_zero_range():
         {"time": "10:00:00", "price": 755.0},
     ])
     assert "<polyline" in svg       # still renders the line (flat)
+
+
+def _full_session_points() -> list[dict]:
+    """One point per 30 trading minutes across the full trading day:
+    night 20:00→02:30 then day 09:00→15:30."""
+    times = ["20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00",
+             "23:30", "00:00", "00:30", "01:00", "01:30", "02:00", "02:30",
+             "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
+             "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30"]
+    return [{"time": f"{t}:00", "price": 750.0 + i * 0.5}
+            for i, t in enumerate(times)]
+
+
+def test_gold_chart_svg_full_span_labels_and_divider():
+    """Fixed full-span axis: all 4 session-boundary labels always render
+    (regardless of data coverage), with a dashed divider at the midpoint."""
+    svg = render.gold_chart_svg(_full_session_points(), 166, 64)
+    for label in ("20:00", "02:30", "09:00", "15:30"):
+        assert f">{label}</text>" in svg, f"missing label {label}"
+    assert ">12:15</text>" not in svg      # mid-day label dropped
+    assert 'stroke-dasharray="2,2"' in svg  # session divider line
+
+
+def test_gold_chart_svg_fixed_axis_partial_night():
+    """Night just opened: with a fixed 0→780 axis the line hugs the left
+    edge instead of stretching to full width (no auto-fit)."""
+    svg = render.gold_chart_svg([
+        {"time": "20:00:00", "price": 750.0},
+        {"time": "20:15:00", "price": 751.0},
+        {"time": "20:30:00", "price": 750.5},
+    ], 166, 64)
+    assert "<polyline" in svg
+    coords = re.search(r'<polyline points="([^"]+)"', svg).group(1)
+    xs = [float(c.split(",")[0]) for c in coords.split()]
+    # 30 trading minutes of 780 ≈ 3.8% of chart width; first point ≈ pad_x
+    assert xs[0] == pytest.approx(10.0, abs=1.0)
+    assert xs[-1] < 10.0 + 0.2 * (166 - 20)   # far left of the right edge
+    # All 4 labels still shown even though data covers only the night open.
+    for label in ("20:00", "02:30", "09:00", "15:30"):
+        assert f">{label}</text>" in svg
+
+
+def test_gold_chart_svg_divider_at_midpoint():
+    """Divider sits at the horizontal middle of the chart area (trading
+    minute 390 = the 02:30/09:00 boundary)."""
+    svg = render.gold_chart_svg(_full_session_points(), 166, 64)
+    line = re.search(r'<line x1="([\d.]+)" y1="[\d.]+" x2="[\d.]+" y2="[\d.]+"', svg)
+    assert line, "divider line missing"
+    x1 = float(line.group(1))
+    # pad_x=10, chart_w=146 → mid = 10 + 73 = 83
+    assert x1 == pytest.approx(83.0, abs=1.0)
 
 

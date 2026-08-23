@@ -84,7 +84,27 @@ def pomodoro_state(now: datetime) -> dict:
 
 _weather_cache = {"data": None, "ts": 0.0}
 
-_gold_cache = {"data": None, "ts": 0.0, "hour": None}
+_gold_cache = {"data": None, "ts": 0.0, "session": None}
+
+
+def _gold_session_key(now: datetime) -> str:
+    """Return a cache key that changes at gold trading session boundaries.
+
+    The trading-day view computed by fetch_gold_intraday() changes at:
+      02:30 — reference date shifts from yesterday to today
+      09:00 — day session opens (fresh data)
+      20:00 — night session opens, reference shifts to tomorrow
+    """
+    hm = now.hour * 60 + now.minute
+    if hm < 150:                    # 00:00 – 02:30
+        segment = "night-end"
+    elif hm < 540:                  # 02:30 – 09:00
+        segment = "pre-open"
+    elif hm < 1200:                 # 09:00 – 20:00
+        segment = "day"
+    else:                           # 20:00 – 23:59
+        segment = "night-start"
+    return f"{now.strftime('%Y-%m-%d')}-{segment}"
 
 
 def _fetch_weather_cached() -> weather.WeatherData:
@@ -112,15 +132,15 @@ def _fetch_weather_cached() -> weather.WeatherData:
 
 
 def _fetch_gold_cached() -> gold_fetcher.GoldData | None:
-    """Serve cached gold data within the same cache window and hour; otherwise
-    re-fetch. Returns None when no data is available (never cached and fetch
-    failed)."""
+    """Serve cached gold data while within weather_cache_min AND the same
+    trading session; otherwise re-fetch. Returns None when no data is
+    available (never cached and fetch failed)."""
     now = time.monotonic()
-    cur_hour = datetime.now(ZoneInfo(settings.tz)).hour
+    cur_session = _gold_session_key(datetime.now(ZoneInfo(settings.tz)))
     cached = _gold_cache.get("data")
     if (cached is not None
             and now - _gold_cache.get("ts", 0.0) < calendar.weather_cache_min * 60
-            and _gold_cache.get("hour") == cur_hour):
+            and _gold_cache.get("session") == cur_session):
         return cached
     try:
         data = gold_fetcher.fetch_gold_intraday("Au99.99")
@@ -128,13 +148,13 @@ def _fetch_gold_cached() -> gold_fetcher.GoldData | None:
         log.warning("gold fetch failed; serving %s", "stale cache" if cached is not None else "degraded", exc_info=True)
         return cached if cached is not None else None
     # Don't cache empty data (prevents a transient empty response from poisoning
-    # the cache for the rest of the hour).
+    # the cache for the rest of the session).
     if data.current is None and cached is not None:
         log.warning("gold fetch returned empty; keeping stale cache")
         return cached
     _gold_cache["data"] = data
     _gold_cache["ts"] = now
-    _gold_cache["hour"] = cur_hour
+    _gold_cache["session"] = cur_session
     return data
 
 
@@ -215,10 +235,29 @@ def prio_marker(prio: str) -> str:
 
 def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
     """Build an inline monochrome SVG line chart from gold data points.
-    Returns an <svg> element with a polyline — no JS, no external deps."""
-    if not points or len(points) < 1:
+    Returns an <svg> element with a polyline — no JS, no external deps.
+
+    X axis is proportional to TRADING time, not point index: the night session
+    (20:00→02:30) maps to the left half and the day session (09:00→15:30) to
+    the right half — an Alipay-style 分时图. With index spacing the ~390 night
+    points would crush the day session to a sliver whenever the render happens
+    mid-morning.
+    """
+    if not points:
         return '<svg class="ic" viewBox="0 0 %d %d"><text x="%d" y="%d" text-anchor="middle" font-size="12" fill="#5f5f5f">--</text></svg>' % (width, height, width // 2, height // 2 + 4)
 
+    def _tmin(t: str) -> int:
+        return int(t[:2]) * 60 + int(t[3:5])
+
+    # Session timeline in trading minutes: night 20:00(-240 offset from midnight
+    # → 0) …02:30 = 390 min, then day 09:00(=390)…15:30 = 780 min.
+    def _trading_min(t: str) -> int:
+        m = _tmin(t)
+        if m >= 20 * 60:          # evening slice: 20:00→24:00 = 0→240
+            return m - 20 * 60
+        return m + 4 * 60         # morning/day slice: 0→4:30=240…, 09:00=390, 15:30=780
+
+    SPAN = 780                    # total trading minutes
     prices = [p["price"] for p in points]
     lo, hi = min(prices), max(prices)
     if hi == lo:
@@ -236,37 +275,47 @@ def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
     chart_w = width - 2 * pad_x
     chart_h = height - pad_y_top - pad_y_bottom
 
-    def _x(i: int) -> float:
-        return pad_x + (i / max(len(points) - 1, 1)) * chart_w
+    def _x(t: str) -> float:
+        return pad_x + (_trading_min(t) / SPAN) * chart_w
 
     def _y(price: float) -> float:
         return pad_y_top + chart_h - ((price - y_min) / (y_max - y_min)) * chart_h
 
     # Build polyline points string
-    pts = " ".join(f"{_x(i):.1f},{_y(p):.1f}" for i, p in enumerate(prices))
+    pts = " ".join(f"{_x(p['time']):.1f},{_y(p['price']):.1f}" for p in points)
 
-    # X-axis time labels: pick ~4 evenly-spaced labels
-    n = len(points)
-    indices = [0, n // 3, 2 * n // 3, n - 1] if n >= 4 else [0, n - 1]
-    # Deduplicate (if n is small)
-    seen = set()
-    labels = []
-    for idx in indices:
-        if idx not in seen and 0 <= idx < n:
-            seen.add(idx)
-            t = points[idx]["time"]
-            short = t[:5] if len(t) >= 5 else t
-            labels.append((_x(idx), short))
+    # X-axis: FIXED full trading span (0→780). Labels always render — the
+    # chart is an Alipay-style 分时图 where the line grows rightward over
+    # the trading day, so ticks exist whether or not data covers them yet.
+    mid_x = pad_x + chart_w / 2
 
+    # Session divider at the 02:30/09:00 boundary (trading minute 390).
+    divider = (
+        f'<line x1="{mid_x:.1f}" y1="{pad_y_top}" x2="{mid_x:.1f}" '
+        f'y2="{height - pad_y_bottom}" stroke="#c0c0c0" '
+        f'stroke-dasharray="2,2" stroke-width="1"/>'
+    )
+
+    # (x, label, text-anchor): ends flush to the chart edge, the 02:30/09:00
+    # pair splits around the divider — 02:30 right-aligned left of it,
+    # 09:00 left-aligned right of it.
+    labels = [
+        (pad_x, "20:00", "start"),
+        (mid_x - 2, "02:30", "end"),
+        (mid_x + 2, "09:00", "start"),
+        (width - pad_x, "15:30", "end"),
+    ]
     label_html = "".join(
-        f'<text x="{x:.1f}" y="{height - 2}" text-anchor="middle" font-size="7" fill="#5f5f5f">{label}</text>'
-        for x, label in labels
+        f'<text x="{x:.1f}" y="{height - 2}" text-anchor="{anchor}" '
+        f'font-size="7" fill="#5f5f5f">{label}</text>'
+        for x, label, anchor in labels
     )
     # Current price dot at the end
-    last_x, last_y = _x(len(points) - 1), _y(prices[-1])
+    last_x, last_y = _x(points[-1]["time"]), _y(prices[-1])
 
     return (
         f'<svg class="ic" viewBox="0 0 {width} {height}" style="width:100%;height:auto;">'
+        f'{divider}'
         f'<polyline points="{pts}" fill="none" stroke="#0a0a0a" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
         f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="2.5" fill="#0a0a0a"/>'
         f'{label_html}'
