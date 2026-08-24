@@ -288,6 +288,31 @@ def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
     def _y(price: float) -> float:
         return pad_y_top + chart_h - ((price - y_min) / (y_max - y_min)) * chart_h
 
+    # Downsample: one-per-minute data (700+ points) renders as a blob at ~146px
+    # wide. Keep at most one vertex per ~2px: bucket points by trading minute,
+    # and within each bucket keep the point furthest in price from the LAST
+    # kept vertex — turns survive, flat stretches collapse. First/last points
+    # always kept (open / current-price dot).
+    max_pts = max(int(chart_w // 2), 8)
+    if len(points) > max_pts:
+        tm_all = [_trading_min(p["time"]) for p in points]
+        step = (tm_all[-1] - tm_all[0] + 1) / (max_pts - 1)
+        picked = [points[0]]
+        i = 1
+        for b in range(1, max_pts - 1):
+            lo_tm = tm_all[0] + b * step
+            hi_tm = lo_tm + step
+            bucket = [k for k in range(i, len(points)) if lo_tm <= tm_all[k] < hi_tm]
+            if not bucket:
+                continue
+            ref = _y(picked[-1]["price"])
+            best = max(bucket, key=lambda k: abs(_y(points[k]["price"]) - ref))
+            picked.append(points[best])
+            i = best + 1
+        if i < len(points):
+            picked.append(points[-1])
+        points = picked
+
     # Build polyline points string
     pts = " ".join(f"{_x(p['time']):.1f},{_y(p['price']):.1f}" for p in points)
 
