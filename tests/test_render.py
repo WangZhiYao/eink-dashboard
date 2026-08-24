@@ -502,6 +502,38 @@ def test_gold_chart_svg_divider_at_midpoint():
     assert x1 == pytest.approx(83.0, abs=1.0)
 
 
+def test_gold_chart_svg_session_time_to_x_mapping():
+    """Trading-minute → x mapping: night 20:00→02:30 spans the LEFT half
+    (0→390 of 780), day 09:00→15:30 the RIGHT half (390→780). Regression for
+    the day-session mapping bug where 09:00 landed on the far-right end (780)
+    and mid-day points overflowed past the viewBox."""
+    svg = render.gold_chart_svg(_full_session_points(), 166, 64)
+    coords = re.search(r'<polyline points="([^"]+)"', svg).group(1)
+    # _full_session_points: 28 points, index 13 = 02:30, 14 = 09:00, 27 = 15:30
+    xs = [float(c.split(",")[0]) for c in coords.split()]
+    assert xs[0] == pytest.approx(10.0, abs=1.0)    # 20:00 → left edge
+    assert xs[13] == pytest.approx(83.0, abs=1.0)   # 02:30 → midpoint
+    assert xs[14] == pytest.approx(83.0, abs=1.0)   # 09:00 → midpoint too
+    assert xs[27] == pytest.approx(156.0, abs=1.0)  # 15:30 → right edge
+    assert max(xs) <= 156.0 + 0.5                   # nothing past the axis
+
+
+def test_gold_chart_svg_day_session_midmorning_x():
+    """Mid-morning (e.g. 12:40) must sit in the right half, not past the
+    right edge — the user-visible symptom of the mapping bug."""
+    svg = render.gold_chart_svg([
+        {"time": "00:00:00", "price": 996.0},
+        {"time": "02:30:00", "price": 997.0},
+        {"time": "09:00:00", "price": 998.0},
+        {"time": "12:40:00", "price": 1002.0},
+    ], 166, 64)
+    coords = re.search(r'<polyline points="([^"]+)"', svg).group(1)
+    xs = [float(c.split(",")[0]) for c in coords.split()]
+    # 12:40 = trading minute 610 of 780 → x = 10 + (610/780)*146 ≈ 124.2
+    assert xs[3] == pytest.approx(10 + 610 / 780 * 146, abs=1.5)
+    assert max(xs) <= 156.5
+
+
 def _rest_ctx(forecast=None):
     """Context for a rest day (day_type=rest) — weather card replaces gold."""
     ctx = _pomodoro_ctx({"active": False})

@@ -249,13 +249,15 @@ def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
     def _tmin(t: str) -> int:
         return int(t[:2]) * 60 + int(t[3:5])
 
-    # Session timeline in trading minutes: night 20:00(-240 offset from midnight
-    # → 0) …02:30 = 390 min, then day 09:00(=390)…15:30 = 780 min.
+    # Session timeline in trading minutes: night evening 20:00→24:00 = 0→240,
+    # night morning 00:00→02:30 = 240→390, day 09:00→15:30 = 390→780.
     def _trading_min(t: str) -> int:
         m = _tmin(t)
         if m >= 20 * 60:          # evening slice: 20:00→24:00 = 0→240
             return m - 20 * 60
-        return m + 4 * 60         # morning/day slice: 0→4:30=240…, 09:00=390, 15:30=780
+        if m <= 150:              # night tail: 00:00→02:30 = 240→390
+            return m + 4 * 60
+        return m - 150            # day session: 09:00→15:30 = 390→780
 
     SPAN = 780                    # total trading minutes
     prices = [p["price"] for p in points]
