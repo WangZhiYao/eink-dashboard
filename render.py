@@ -294,8 +294,11 @@ def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
     # kept vertex — turns survive, flat stretches collapse. First/last points
     # always kept (open / current-price dot).
     max_pts = max(int(chart_w // 2), 8)
-    if len(points) > max_pts:
-        tm_all = [_trading_min(p["time"]) for p in points]
+    tm_all = [_trading_min(p["time"]) for p in points]
+    if len(points) > max_pts and tm_all[-1] > tm_all[0]:
+        # Guard: sampling assumes trading-minute-monotonic input (what the
+        # fetcher returns). Non-monotonic input (raw clock-order cache fed
+        # directly) would collapse the line — skip sampling in that case.
         step = (tm_all[-1] - tm_all[0] + 1) / (max_pts - 1)
         picked = [points[0]]
         i = 1

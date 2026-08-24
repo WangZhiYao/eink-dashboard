@@ -594,6 +594,22 @@ def test_gold_chart_svg_downsamples_dense_input():
     assert n2 == 5
 
 
+def test_gold_chart_svg_no_downsample_on_non_monotonic_input():
+    """Guard: sampling buckets by trading minute and assumes monotonic order
+    (what the fetcher returns). Raw clock-order data fed directly (night tail
+    → day → evening, tm goes 240…390, 390…780, 0…239) must NOT be collapsed."""
+    pts = ([{"time": f"{h:02d}:{m:02d}:00", "price": 1000.0 + h}
+            for h in range(0, 3) for m in range(0, 60)]
+           + [{"time": "02:30:00", "price": 1003.0}]
+           + [{"time": f"{h:02d}:{m:02d}:00", "price": 1004.0 + h}
+              for h in range(9, 16) for m in range(0, 60)]
+           + [{"time": "20:00:00", "price": 1010.0},
+              {"time": "20:30:00", "price": 1011.0}])   # evening wraps tm back to 0
+    svg = render.gold_chart_svg(pts, 166, 64)
+    n = len(re.search(r'<polyline points="([^"]+)"', svg).group(1).split())
+    assert n == len(pts)              # sampling skipped, nothing lost
+
+
 def _rest_ctx(forecast=None):
     """Context for a rest day (day_type=rest) — weather card replaces gold."""
     ctx = _pomodoro_ctx({"active": False})
