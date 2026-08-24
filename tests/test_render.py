@@ -382,6 +382,30 @@ def test_gold_cache_reuses_within_window(monkeypatch):
     assert len(calls) == 2
 
 
+def test_gold_cache_short_independent_ttl(monkeypatch):
+    """Gold cache TTL is its own 5-min window (aligned with render_interval_min),
+    NOT weather_cache_min: gold is a live 分时图 and must track SGE's
+    in-progress session; a 30-min weather window left the shown price up to
+    half an hour stale."""
+    render._gold_cache.clear()
+    calls = []
+    mock_gold = GoldData(current=1007.1)
+    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday",
+                        lambda symbol: (calls.append(1), mock_gold)[1])
+
+    render._fetch_gold_cached()
+    # Simulate 10 minutes elapsed — beyond gold's 5-min TTL but well within
+    # weather_cache_min (30). Must re-fetch despite weather window still open.
+    render._gold_cache["ts"] -= 10 * 60
+    render._fetch_gold_cached()
+    assert len(calls) == 2
+
+    # And within 5 minutes it stays cached.
+    render._gold_cache["ts"] -= 3 * 60
+    render._fetch_gold_cached()
+    assert len(calls) == 2
+
+
 def test_gold_cache_falls_back_to_stale(monkeypatch):
     """A failed re-fetch returns stale cache, not None."""
     render._gold_cache.clear()

@@ -86,6 +86,11 @@ _weather_cache = {"data": None, "ts": 0.0}
 
 _gold_cache = {"data": None, "ts": 0.0, "session": None}
 
+# Gold's own cache TTL — NOT weather_cache_min. The 分时图 tracks a live SGE
+# session; a 30-min window left the shown price up to half an hour stale while
+# SGE kept correcting its in-progress rows.
+GOLD_CACHE_MIN = 5
+
 
 def _gold_session_key(now: datetime) -> str:
     """Return a cache key that changes at gold trading session boundaries.
@@ -132,14 +137,14 @@ def _fetch_weather_cached() -> weather.WeatherData:
 
 
 def _fetch_gold_cached() -> gold_fetcher.GoldData | None:
-    """Serve cached gold data while within weather_cache_min AND the same
+    """Serve cached gold data within GOLD_CACHE_MIN (5 min) and the same
     trading session; otherwise re-fetch. Returns None when no data is
     available (never cached and fetch failed)."""
     now = time.monotonic()
     cur_session = _gold_session_key(datetime.now(ZoneInfo(settings.tz)))
     cached = _gold_cache.get("data")
     if (cached is not None
-            and now - _gold_cache.get("ts", 0.0) < calendar.weather_cache_min * 60
+            and now - _gold_cache.get("ts", 0.0) < GOLD_CACHE_MIN * 60
             and _gold_cache.get("session") == cur_session):
         return cached
     try:
