@@ -96,11 +96,11 @@ def gold_chart_svg(points: list, width: int = 166, height: int = 64) -> str:
         return pad_y_top + chart_h - ((price - y_min) / (y_max - y_min)) * chart_h
 
     # Downsample: one-per-minute data (700+ points) renders as a blob at ~146px
-    # wide. Keep at most one vertex per ~2px: bucket points by trading minute,
+    # wide. Keep at most one vertex per ~5px: bucket points by trading minute,
     # and within each bucket keep the point furthest in price from the LAST
     # kept vertex — turns survive, flat stretches collapse. First/last points
     # always kept (open / current-price dot).
-    max_pts = max(int(chart_w // 2), 8)
+    max_pts = max(int(chart_w // 5), 8)
     tm_all = [_trading_min(p["time"]) for p in points]
     if len(points) > max_pts and tm_all[-1] > tm_all[0]:
         # Guard: sampling assumes trading-minute-monotonic input (what the

@@ -464,7 +464,7 @@ def test_gold_chart_svg_day_session_midmorning_x():
 
 def test_gold_chart_svg_downsamples_dense_input():
     """~780 one-per-minute points crammed into 146px render as an unreadable
-    blob; the polyline must be downsampled to at most ~1 point per 2px of
+    blob; the polyline must be downsampled to at most ~1 point per 5px of
     chart width, keeping the first/last points (open/current price dot)."""
     # Full trading day, one point per trading minute (what the fetcher serves
     # at day close): 28 minutes sampled per session-hour to stay realistic —
@@ -485,8 +485,8 @@ def test_gold_chart_svg_downsamples_dense_input():
     svg = render.gold_chart_svg(_pts_full(), 166, 64)
     coords = re.search(r'<polyline points="([^"]+)"', svg).group(1)
     n = len(coords.split())
-    assert n <= 73                                  # 146px / 2px ≈ 73 vertices
-    assert n >= 60                                  # but still dense enough to hold shape
+    assert n <= 29                                  # 146px / 5px ≈ 29 vertices
+    assert n >= 24                                  # but still dense enough to hold shape
     # endpoints survive sampling: first x ≈ pad_x, last x ≈ right edge
     xs = [float(c.split(",")[0]) for c in coords.split()]
     assert xs[0] == pytest.approx(10.0, abs=1.0)
