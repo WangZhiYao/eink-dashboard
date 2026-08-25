@@ -3,11 +3,12 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 import app
 import render
+import render.schedule
 
 
 def test_render_tick_renders_inside_workday_window(monkeypatch):
     calls = []
-    monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
+    monkeypatch.setattr(render.schedule, "render_now", lambda: calls.append("full"))
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 8, 3, 9, 0, tzinfo=tz))    # Monday 9:00
     assert calls == ["full"]
@@ -21,7 +22,7 @@ def test_render_tick_renders_inside_workday_window(monkeypatch):
 
 def test_render_tick_prerender_before_window(monkeypatch):
     calls = []
-    monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
+    monkeypatch.setattr(render.schedule, "render_now", lambda: calls.append("full"))
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 8, 3, 8, 55, tzinfo=tz))    # lookahead
     assert calls == ["full"]
@@ -34,7 +35,7 @@ def test_render_tick_rest_day_renders_every_tick_after_render_at(monkeypatch):
     # 休息日从 render_at 起每 5 分钟照常渲染（时钟/天气/待办实时刷新），同工作日布局；
     # render_at 之前不渲染
     calls = []
-    monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
+    monkeypatch.setattr(render.schedule, "render_now", lambda: calls.append("full"))
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 8, 2, 8, 55, tzinfo=tz))    # Sunday before 9:00
     assert calls == []
@@ -50,7 +51,7 @@ def test_render_tick_holiday_override_renders_full_screen(monkeypatch):
     monkeypatch.setattr(render.calendar, "_overrides",
                         {date(2026, 10, 1): ("rest", "国庆节")})
     calls = []
-    monkeypatch.setattr(render, "render_now", lambda: calls.append("full"))
+    monkeypatch.setattr(render.schedule, "render_now", lambda: calls.append("full"))
     tz = ZoneInfo("Asia/Shanghai")
     render.render_tick(datetime(2026, 10, 1, 9, 0, tzinfo=tz))
     render.render_tick(datetime(2026, 10, 1, 9, 5, tzinfo=tz))

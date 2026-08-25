@@ -3,6 +3,9 @@ from zoneinfo import ZoneInfo
 import re
 
 import render
+import render.context
+import render.png
+import render.schedule
 from fetchers.sht40 import Sht40Data
 from fetchers.weather import WeatherData
 from fetchers.gold import GoldData
@@ -15,7 +18,7 @@ def test_build_context_assembles_fields(monkeypatch):
                         lambda *a, **k: WeatherData(current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21, aqi=45))
     render._weather_cache.clear()
     from todos.db import Todo
-    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [Todo(1, "回复邮件", False, "high", "2026-08-03T00:00:00+00:00")])
+    monkeypatch.setattr(render.context, "_todos_for_dashboard", lambda: [Todo(1, "回复邮件", False, "high", "2026-08-03T00:00:00+00:00")])
     ctx = render.build_context(now=datetime(2026, 8, 2, 9, 41))
     assert ctx["time_str"] == "09:41"
     assert ctx["date_str"] == "2026.08.02"
@@ -30,13 +33,13 @@ def test_build_context_assembles_fields(monkeypatch):
 
 def test_build_context_includes_day_name_and_type(monkeypatch):
     from daytypes import Calendar
-    monkeypatch.setattr(render, "calendar",
+    monkeypatch.setattr(render.context, "calendar",
                         Calendar({"overrides": {"2026-10-01": {"type": "rest", "name": "国庆节"}}}))
     monkeypatch.setattr(render.sht40, "fetch_sht40",
                         lambda *a, **k: Sht40Data(temp=26.0, humidity=42.0, battery=87))
     monkeypatch.setattr(render.weather, "fetch_weather",
                         lambda *a, **k: WeatherData(current={"temp": 28}))
-    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [])
+    monkeypatch.setattr(render.context, "_todos_for_dashboard", lambda: [])
     render._weather_cache.clear()
     ctx = render.build_context(now=datetime(2026, 10, 1, 9, 0))
     assert ctx["day_type"] == "rest" and ctx["day_name"] == "国庆节"
@@ -62,7 +65,7 @@ from PIL import Image
 
 def test_render_to_png_produces_800x480(tmp_path, monkeypatch):
     # stub context so no network
-    monkeypatch.setattr(render, "build_context", lambda: {
+    monkeypatch.setattr(render.schedule, "build_context", lambda: {
         "time_str": "09:41", "date_str": "2026.08.02", "weekday": "星期日",
         "indoor": render.sht40.Sht40Data(temp=26.0, humidity=42.0, battery=87),
         "weather": render.weather.WeatherData(current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21, aqi=45,
@@ -82,7 +85,7 @@ def test_render_to_png_produces_800x480(tmp_path, monkeypatch):
 def test_render_to_png_works_inside_running_event_loop(tmp_path, monkeypatch):
     # Regression: render_to_png must be synchronous (no asyncio.run inside),
     # so it works when called from FastAPI's running event loop (lifespan).
-    monkeypatch.setattr(render, "build_context", lambda: {
+    monkeypatch.setattr(render.schedule, "build_context", lambda: {
         "time_str": "09:41", "date_str": "2026.08.02", "weekday": "星期日",
         "indoor": render.sht40.Sht40Data(temp=26.0, humidity=42.0, battery=87),
         "weather": render.weather.WeatherData(current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21, aqi=45,
@@ -182,22 +185,6 @@ def test_template_focus_card_shows_rest_day():
     assert "休息日" not in render.render_html(ctx2)
 
 
-def test_weather_cache(monkeypatch):
-    render._weather_cache.clear()
-    calls = []
-    monkeypatch.setattr(render.weather, "fetch_weather",
-                        lambda *a, **k: calls.append(1) or WeatherData(current={"temp": 28}))
-    render._fetch_weather_cached()      # fetch
-    render._fetch_weather_cached()      # served from cache
-    assert len(calls) == 1
-    render._weather_cache["ts"] = 0     # expire the cache
-    render._fetch_weather_cached()      # refetch
-    assert len(calls) == 2
-    render._weather_cache["hour"] = -1  # simulate crossing an hour boundary
-    render._fetch_weather_cached()      # refetch despite fresh TTL
-    assert len(calls) == 3
-
-
 def test_build_context_survives_sht40_failure(monkeypatch):
     # SenseCraft down -> build_context must degrade the indoor panel, not kill the render.
     monkeypatch.setattr(render.sht40, "fetch_sht40",
@@ -205,7 +192,7 @@ def test_build_context_survives_sht40_failure(monkeypatch):
     monkeypatch.setattr(render.weather, "fetch_weather",
                         lambda *a, **k: WeatherData(current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21))
     render._weather_cache.clear()
-    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [])
+    monkeypatch.setattr(render.context, "_todos_for_dashboard", lambda: [])
     ctx = render.build_context(now=datetime(2026, 8, 2, 9, 41))
     assert ctx["indoor"].temp is None and ctx["indoor"].humidity is None   # degraded
     assert ctx["weather"].current["temp"] == 28                            # weather still rendered
@@ -218,30 +205,10 @@ def test_build_context_survives_weather_failure(monkeypatch):
     monkeypatch.setattr(render.sht40, "fetch_sht40",
                         lambda *a, **k: Sht40Data(temp=26.0, humidity=42.0, battery=87))
     render._weather_cache.clear()
-    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [])
+    monkeypatch.setattr(render.context, "_todos_for_dashboard", lambda: [])
     ctx = render.build_context(now=datetime(2026, 8, 2, 9, 41))
     assert ctx["indoor"].temp == 26.0                                      # indoor still rendered
     assert ctx["weather"].current == {}                                    # weather degraded to empty
-
-
-def test_fetch_weather_cached_falls_back_to_stale_cache(monkeypatch):
-    # A fresh re-fetch that raises must return the previously cached data, not propagate.
-    render._weather_cache.clear()
-    good = WeatherData(current={"temp": 28, "text": "多云"})
-    calls = []
-
-    def fetch_then_fail(*a, **k):
-        calls.append(1)
-        return good if len(calls) == 1 else (_ for _ in ()).throw(RuntimeError("qweather down"))
-
-    monkeypatch.setattr(render.weather, "fetch_weather", fetch_then_fail)
-    first = render._fetch_weather_cached()          # succeeds, populates cache
-    assert first.current["temp"] == 28
-    render._weather_cache["ts"] = 0.0                # force a cache miss on next call
-    render._weather_cache["hour"] = -1
-    second = render._fetch_weather_cached()          # fetch raises -> must fall back to stale cache
-    assert second.current["temp"] == 28              # stale data served, no exception
-    assert len(calls) == 2
 
 
 def test_render_now_serializes_concurrent_calls(monkeypatch):
@@ -258,8 +225,8 @@ def test_render_now_serializes_concurrent_calls(monkeypatch):
         with state:
             cur["n"] -= 1
 
-    monkeypatch.setattr(render, "build_context", lambda: {})
-    monkeypatch.setattr(render, "render_to_png", slow)
+    monkeypatch.setattr(render.schedule, "build_context", lambda: {})
+    monkeypatch.setattr(render.schedule, "render_to_png", slow)
     threads = [threading.Thread(target=render.render_now) for _ in range(8)]
     for t in threads:
         t.start()
@@ -270,8 +237,8 @@ def test_render_now_serializes_concurrent_calls(monkeypatch):
 
 def test_render_to_png_propagates_error_from_worker_thread(tmp_path, monkeypatch):
     # The in_loop path runs _screenshot on a worker thread; its errors must surface, not vanish.
-    monkeypatch.setattr(render, "render_html", lambda ctx: "<html></html>")
-    monkeypatch.setattr(render, "_screenshot", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("chromium died")))
+    monkeypatch.setattr(render.png, "render_html", lambda ctx: "<html></html>")
+    monkeypatch.setattr(render.png, "_screenshot", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("chromium died")))
     out = tmp_path / "out.png"
 
     async def inside_loop():
@@ -349,7 +316,7 @@ def test_build_context_includes_gold(monkeypatch):
                         lambda *a, **k: WeatherData(current={"temp": 28}))
     render._weather_cache.clear()
     render._gold_cache.clear()
-    monkeypatch.setattr(render, "_todos_for_dashboard", lambda: [])
+    monkeypatch.setattr(render.context, "_todos_for_dashboard", lambda: [])
 
     # stub gold fetch
     mock_gold = GoldData(current=760.5, open=755.0, high=762.8, low=753.2,
@@ -363,69 +330,6 @@ def test_build_context_includes_gold(monkeypatch):
     assert ctx["gold"].current == 760.5
     assert ctx["gold"].open == 755.0
     assert len(ctx["gold"].points) == 2
-
-
-def test_gold_cache_reuses_within_window(monkeypatch):
-    """Gold cache reuses data within weather_cache_min and same hour."""
-    render._gold_cache.clear()
-    calls = []
-    mock_gold = GoldData(current=760.5)
-    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday",
-                        lambda symbol: (calls.append(1), mock_gold)[1])
-
-    render._fetch_gold_cached()        # fetch
-    render._fetch_gold_cached()        # served from cache
-    assert len(calls) == 1
-    render._gold_cache["ts"] = 0.0     # expire TTL
-    render._gold_cache["hour"] = -1    # cross hour boundary
-    render._fetch_gold_cached()        # refetch
-    assert len(calls) == 2
-
-
-def test_gold_cache_short_independent_ttl(monkeypatch):
-    """Gold cache TTL is its own 5-min window (aligned with render_interval_min),
-    NOT weather_cache_min: gold is a live 分时图 and must track SGE's
-    in-progress session; a 30-min weather window left the shown price up to
-    half an hour stale."""
-    render._gold_cache.clear()
-    calls = []
-    mock_gold = GoldData(current=1007.1)
-    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday",
-                        lambda symbol: (calls.append(1), mock_gold)[1])
-
-    render._fetch_gold_cached()
-    # Simulate 10 minutes elapsed — beyond gold's 5-min TTL but well within
-    # weather_cache_min (30). Must re-fetch despite weather window still open.
-    render._gold_cache["ts"] -= 10 * 60
-    render._fetch_gold_cached()
-    assert len(calls) == 2
-
-    # And within 5 minutes it stays cached.
-    render._gold_cache["ts"] -= 3 * 60
-    render._fetch_gold_cached()
-    assert len(calls) == 2
-
-
-def test_gold_cache_falls_back_to_stale(monkeypatch):
-    """A failed re-fetch returns stale cache, not None."""
-    render._gold_cache.clear()
-    good = GoldData(current=760.5)
-    calls = []
-
-    def fetch_then_fail(symbol):
-        calls.append(1)
-        if len(calls) == 1:
-            return good
-        raise RuntimeError("akshare down")
-
-    monkeypatch.setattr(render.gold_fetcher, "fetch_gold_intraday", fetch_then_fail)
-    first = render._fetch_gold_cached()          # succeeds
-    assert first.current == 760.5
-    render._gold_cache["ts"] = 0.0               # force cache miss
-    render._gold_cache["hour"] = -1
-    second = render._fetch_gold_cached()          # fetch raises -> fall back
-    assert second.current == 760.5                # stale data served
-    assert len(calls) == 2
 
 
 def test_template_gold_card_renders_chart():

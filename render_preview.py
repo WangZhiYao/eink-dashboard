@@ -6,14 +6,16 @@
 import os
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-import render
+from fetchers import sht40, weather
+from fetchers.gold import GoldData
+from render import render_to_png
 
 CTX = {
     "time_str": "10:07",
     "date_str": "2026.08.08",
     "weekday": "星期六",
-    "indoor": render.sht40.Sht40Data(temp=26.0, humidity=42.0, battery=87),
-    "weather": render.weather.WeatherData(
+    "indoor": sht40.Sht40Data(temp=26.0, humidity=42.0, battery=87),
+    "weather": weather.WeatherData(
         current={"temp": 28, "text": "多云", "icon": "104"}, hi=29, lo=21, aqi=45,
         hourly=[
             {"label": "现在", "text": "多云", "temp": 28, "rain": 34},
@@ -31,7 +33,7 @@ CTX = {
     ],
     "day_type": "workday",
     "day_name": "",
-    "gold": render.gold_fetcher.GoldData(
+    "gold": GoldData(
         current=760.50,
         open=755.00,
         high=762.80,
@@ -51,5 +53,5 @@ CTX = {
     ),
 }
 
-render.render_to_png(CTX, "static/preview.png")
+render_to_png(CTX, "static/preview.png")
 print("preview written to static/preview.png")
