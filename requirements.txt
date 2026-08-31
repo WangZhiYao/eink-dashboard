@@ -7,4 +7,4 @@ apscheduler>=3.11.3
 pydantic-settings>=2.15.0
 lunardate>=0.3.0
 pillow>=12.3.0
-akshare>=1.18.92
+akshare>=1.18.94
