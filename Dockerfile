@@ -1,6 +1,6 @@
 # Base: Playwright Python image (Chromium + system deps preinstalled).
 # Pinned to the local playwright version (1.62.0) so the bundled browser matches.
-FROM mcr.microsoft.com/playwright/python:v1.62.0
+FROM mcr.microsoft.com/playwright/python:v1.63.0
 
 # CJK + general fonts so the dashboard's Chinese renders correctly in headless Chromium.
 RUN apt-get update \
